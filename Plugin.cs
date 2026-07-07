@@ -619,6 +619,15 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // "Select any production / resource" target popup: Space confirms the
+                // highlighted player (Confirm self-guards on a valid selection).
+                StealResourcePage stealPage = Object.FindFirstObjectByType<StealResourcePage>();
+                if (stealPage != null)
+                {
+                    stealPage.Confirm();
+                    return;
+                }
+
                 // A confirmation dialog takes priority: Space is the default OK/Yes.
                 GenericPopup popup = Object.FindFirstObjectByType<GenericPopup>();
                 if (popup != null)
@@ -851,6 +860,62 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
             }
+        }
+    }
+
+    // Sort the actions popup so usable (not-yet-used) actions float to the top and
+    // spent ones sink to the bottom. Re-applied when the popup opens and refreshes.
+    internal static class ActionSorter
+    {
+        public static void Sort(CardActionsPopup popup)
+        {
+            try
+            {
+                CardActionElement[] elements = popup.GetComponentsInChildren<CardActionElement>();
+                if (elements == null || elements.Length < 2)
+                {
+                    return;
+                }
+                List<Transform> available = new List<Transform>();
+                List<Transform> spent = new List<Transform>();
+                foreach (CardActionElement element in elements)
+                {
+                    BlueCardPlayerAction action =
+                        Traverse.Create(element).Field("m_BlueCardPlayerAction").GetValue<BlueCardPlayerAction>();
+                    bool usable = action != null && action.CanPlayAction(true);
+                    (usable ? available : spent).Add(element.transform);
+                }
+                int index = 0;
+                foreach (Transform t in available)
+                {
+                    t.SetSiblingIndex(index++);
+                }
+                foreach (Transform t in spent)
+                {
+                    t.SetSiblingIndex(index++);
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(CardActionsPopup), "AfterEnterStack")]
+    internal static class SortActionsOnOpenPatch
+    {
+        private static void Postfix(CardActionsPopup __instance)
+        {
+            ActionSorter.Sort(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(CardActionsPopup), "EnableActions")]
+    internal static class SortActionsOnRefreshPatch
+    {
+        private static void Postfix(CardActionsPopup __instance)
+        {
+            ActionSorter.Sort(__instance);
         }
     }
 }

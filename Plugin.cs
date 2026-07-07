@@ -42,6 +42,8 @@ namespace TfmCardRefresh
         private float _elapsed;
         private int _lastPlayer = int.MinValue;
         private int _lastEvents = int.MinValue;
+        private bool _prevIsMyTurn;
+        private bool _reopenHandAfterPass;
 
         private void Awake()
         {
@@ -71,6 +73,8 @@ namespace TfmCardRefresh
                 return;
             }
             _elapsed = 0f;
+
+            KeepHandOpenAfterPass();
 
             try
             {
@@ -116,6 +120,49 @@ namespace TfmCardRefresh
             catch (System.Exception e)
             {
                 Logger.LogWarning("Refresh skipped: " + e.Message);
+            }
+        }
+
+        // Keep your projects visible after you pass: when your turn ends, reopen the
+        // read-only hand once during the opponent's turn (after the game has closed
+        // it). Only once, so a later manual close stays closed. On your own turn the
+        // action-prompt patch handles opening, so this stays out of the way.
+        private void KeepHandOpenAfterPass()
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameInfo info = game?.GameInfo;
+                if (info == null)
+                {
+                    return;
+                }
+                bool isMyTurn = info.CurrentPlayerLocalId == info.GetMyPlayerLocalId();
+                if (_prevIsMyTurn && !isMyTurn)
+                {
+                    _reopenHandAfterPass = true;
+                }
+                if (isMyTurn)
+                {
+                    _reopenHandAfterPass = false;
+                }
+                _prevIsMyTurn = isMyTurn;
+
+                if (_reopenHandAfterPass
+                    && !isMyTurn
+                    && game.GameFlow.CurrentPhase == EPhase.Action
+                    && !UIManager.Instance.IsPageInStack(EPage.ViewPlayerCardsPage))
+                {
+                    OpenHand();
+                    _reopenHandAfterPass = false;
+                }
+            }
+            catch (System.Exception)
+            {
             }
         }
 

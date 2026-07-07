@@ -155,9 +155,9 @@ namespace TfmCardRefresh
                 if (_reopenHandAfterPass
                     && !isMyTurn
                     && game.GameFlow.CurrentPhase == EPhase.Action
-                    && !UIManager.Instance.IsPageInStack(EPage.ViewPlayerCardsPage))
+                    && !UIManager.Instance.IsPageInStack(PreferredPage()))
                 {
-                    OpenHand();
+                    ReopenPreferredPanel();
                     _reopenHandAfterPass = false;
                 }
             }
@@ -292,6 +292,52 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
             }
+        }
+
+        // Whether your most recent play was a card action (blue card) rather than a
+        // project card. Drives which panel the auto-open reopens.
+        internal static bool LastPlayWasAction;
+
+        // Open the card-actions popup (your blue-card actions). No-op if already open.
+        internal static void OpenActions()
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced
+                    || UIManager.Instance.IsPageInStack(EPage.CardActionsPopup))
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                HUD_PlayerTray tray = (game != null && game.HUD != null) ? game.HUD.PlayerTray : null;
+                if (tray != null)
+                {
+                    tray.ShowPopup(EPage.CardActionsPopup);
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Reopen whichever panel you were last using: actions if your last play was a
+        // card action, otherwise your projects/hand.
+        internal static void ReopenPreferredPanel()
+        {
+            if (LastPlayWasAction)
+            {
+                OpenActions();
+            }
+            else
+            {
+                OpenHand();
+            }
+        }
+
+        // The page the preferred panel corresponds to (for "is it already open?").
+        internal static EPage PreferredPage()
+        {
+            return LastPlayWasAction ? EPage.CardActionsPopup : EPage.ViewPlayerCardsPage;
         }
 
         // "View state" / "Return": flip the board-inspection toggle so you can look
@@ -661,12 +707,32 @@ namespace TfmCardRefresh
                 {
                     return;
                 }
-                TfmCardRefreshPlugin.OpenHand();
+                TfmCardRefreshPlugin.ReopenPreferredPanel();
             }
             catch (System.Exception)
             {
-                // Non-fatal: leave the hand closed if anything is unexpected.
+                // Non-fatal: leave the panel closed if anything is unexpected.
             }
+        }
+    }
+
+    // Remember what you last played so the auto-open reopens the matching panel:
+    // projects for a card, actions for a blue-card action.
+    [HarmonyPatch(typeof(TM_HumanAgent), nameof(TM_HumanAgent.HandlePlayCard))]
+    internal static class MarkPlayedCardPatch
+    {
+        private static void Postfix()
+        {
+            TfmCardRefreshPlugin.LastPlayWasAction = false;
+        }
+    }
+
+    [HarmonyPatch(typeof(TM_HumanAgent), nameof(TM_HumanAgent.HandlePlayBlueCardAction))]
+    internal static class MarkPlayedActionPatch
+    {
+        private static void Postfix()
+        {
+            TfmCardRefreshPlugin.LastPlayWasAction = true;
         }
     }
 

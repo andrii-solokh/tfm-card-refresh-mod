@@ -605,6 +605,20 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // Card selection (SELECT CARD TO DISCARD / buy): Space presses the
+                // Done/Discard button, but only when it is interactable (the required
+                // number of cards is selected) so it can't confirm an invalid choice.
+                CardSelectionPage selectPage = Object.FindFirstObjectByType<CardSelectionPage>();
+                if (selectPage != null)
+                {
+                    Button doneButton = Traverse.Create(selectPage).Field("DoneButton").GetValue<Button>();
+                    if (doneButton != null && doneButton.interactable && doneButton.gameObject.activeInHierarchy)
+                    {
+                        doneButton.onClick.Invoke();
+                    }
+                    return;
+                }
+
                 // A confirmation dialog takes priority: Space is the default OK/Yes.
                 GenericPopup popup = Object.FindFirstObjectByType<GenericPopup>();
                 if (popup != null)

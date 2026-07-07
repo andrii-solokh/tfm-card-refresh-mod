@@ -126,7 +126,6 @@ namespace TfmCardRefresh
         private static readonly (KeyCode key, EPage page)[] s_hotkeys =
         {
             (KeyCode.A, EPage.CardActionsPopup),      // actions
-            (KeyCode.T, EPage.CardTagsPopup),         // tags
             (KeyCode.R, EPage.CardResourcesPopup),    // resources
             (KeyCode.V, EPage.CardVictoryPointsPopup),// victory points
             (KeyCode.E, EPage.CardEffectsPopup),      // effects
@@ -151,6 +150,16 @@ namespace TfmCardRefresh
             if (Input.GetKeyDown(KeyCode.P))
             {
                 ToggleHand();
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.G))
+            {
+                Convert(EResourceType.Plant);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.T))
+            {
+                Convert(EResourceType.Heat);
                 return;
             }
             if (Input.GetKeyDown(KeyCode.B))
@@ -259,6 +268,43 @@ namespace TfmCardRefresh
                 if (stateToggle != null)
                 {
                     stateToggle.isOn = !stateToggle.isOn;
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Standard conversions from the tray: Plant -> greenery, Heat -> temperature.
+        // Only fires when the conversion button is interactable (enough resources and
+        // it's your turn), so it can't attempt an illegal conversion.
+        private void Convert(EResourceType resourceType)
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                HUD_PlayerTray tray = (game != null && game.HUD != null) ? game.HUD.PlayerTray : null;
+                if (tray == null)
+                {
+                    return;
+                }
+                string field = (resourceType == EResourceType.Plant) ? "m_PlantConversion" : "m_HeatConversion";
+                CanvasGroup button = Traverse.Create(tray).Field(field).GetValue<CanvasGroup>();
+                if (button == null || !button.interactable)
+                {
+                    return;
+                }
+                if (resourceType == EResourceType.Plant)
+                {
+                    tray.OnPlantConversion();
+                }
+                else
+                {
+                    tray.OnHeatConversion();
                 }
             }
             catch (System.Exception)

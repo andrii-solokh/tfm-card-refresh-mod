@@ -76,12 +76,16 @@ while you're actively typing in chat):
 |-----|--------|
 | P | Projects (hand) |
 | A | Actions |
-| T | Tags |
 | R | Resources |
 | V | Victory points |
 | E | Effects |
+| G | Convert plants → greenery |
+| T | Convert heat → temperature |
 | B | View state (inspect board) / Return |
 | 1–4 | Focus a player's board (1 = you, then the others) |
+
+Conversions (`G`/`T`) only fire when you can actually convert (enough resources,
+your turn). Tags no longer has a key (`T` is now temperature).
 
 ## Rebuild after a game update
 

@@ -4,6 +4,12 @@ A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds quality-of-life
 fixes and keyboard shortcuts to the Asmodee **Terraforming Mars** digital client
 on macOS and Windows.
 
+**Main thing it does: your turn starts instantly.** No more waiting on the
+turn-pass animation and banner before you can play. A short sound still pings so
+you know it's your turn.
+
+![Turn starts instantly with the mod](docs/demo.gif)
+
 Everything it does is **display / UI only**. The game is server-authoritative and
 re-validates every real action, so the mod cannot make an illegal move, reveal
 hidden information, or give any mechanical advantage; it only makes your own
@@ -107,12 +113,16 @@ Chainloader startup complete
 
 ## Features
 
-1. **Card view re-checks playability** on state change (no close/reopen).
+1. **Skip the turn-pass animation and banner** so your turn starts instantly, with
+   a short sound so you still notice (the headline feature, shown above).
 2. **Read your hand during opponent turns.**
-3. **Projects open on your turn**, and the hand reopens after you play a card.
-4. **No turn/phase announcements** (also removes their turn-start delay).
-5. **Requirement-locked cards greyed** when viewing your hand off-turn.
+3. **Cards you can't play are dimmed**, accounting for requirements and whether you
+   can actually afford them (steel/titanium/heat/money), not just the tags.
+4. **Card view re-checks playability** on state change (no close/reopen).
+5. **Projects open on your turn**, and the hand reopens after you play a card.
 6. **Action availability shown off-turn** (unused actions active, used ones dim).
+7. **Full keyboard control** (see Hotkeys below): panel keys, number-badge card
+   select on Ctrl/Cmd, Space to confirm or pass.
 
 ## Hotkeys
 

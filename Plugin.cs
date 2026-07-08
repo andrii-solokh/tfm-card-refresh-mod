@@ -1232,11 +1232,11 @@ namespace TfmCardRefresh
             }
             try
             {
-                ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
-                if (page != null && page.ScrollSnapRect != null)
+                ScrollSnapRect snap = FindActiveCardScroll();
+                if (snap != null)
                 {
-                    int current = Traverse.Create(page.ScrollSnapRect).Field("_currentPage").GetValue<int>();
-                    page.ScrollSnapRect.LerpToPage(current + (right ? 1 : -1));
+                    int current = Traverse.Create(snap).Field("_currentPage").GetValue<int>();
+                    snap.LerpToPage(current + (right ? 1 : -1));
                     return;
                 }
                 NavigateChoice(down: right);
@@ -1244,6 +1244,36 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
             }
+        }
+
+        // The paging scroller of whichever card page is open (carousel, hand browse
+        // grid, or buy/keep selection).
+        private static ScrollSnapRect FindActiveCardScroll()
+        {
+            ExpandPlayerCardsPage carousel = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+            if (carousel != null && carousel.ScrollSnapRect != null)
+            {
+                return carousel.ScrollSnapRect;
+            }
+            ViewPlayerCardsPage grid = Object.FindFirstObjectByType<ViewPlayerCardsPage>();
+            if (grid != null)
+            {
+                ScrollSnapRect s = grid.GetComponentInChildren<ScrollSnapRect>();
+                if (s != null)
+                {
+                    return s;
+                }
+            }
+            CardSelectionPage select = Object.FindFirstObjectByType<CardSelectionPage>();
+            if (select != null)
+            {
+                ScrollSnapRect s = select.GetComponentInChildren<ScrollSnapRect>();
+                if (s != null)
+                {
+                    return s;
+                }
+            }
+            return null;
         }
 
         // True only while a text field is ACTIVELY focused (accepting keystrokes),

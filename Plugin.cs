@@ -250,7 +250,9 @@ namespace TfmCardRefresh
                 }
                 if (UIManager.Instance.IsPageInStack(EPage.ViewPlayerCardsPage))
                 {
+                    UserClosingHand = true;
                     UIManager.Instance.Pop(EPage.ViewPlayerCardsPage);
+                    UserClosingHand = false;
                     return;
                 }
                 OpenHand();
@@ -343,6 +345,40 @@ namespace TfmCardRefresh
         internal static EPage PreferredPage()
         {
             return LastPlayWasAction ? EPage.CardActionsPopup : EPage.ViewPlayerCardsPage;
+        }
+
+        // Set true only while YOU are closing the hand (a manual close path), so those
+        // pops are allowed through while automatic ones are suppressed.
+        internal static bool UserClosingHand;
+
+        // Suppress the game's automatic close of the read-only hand while it is not
+        // your turn, so it stays open (no close-then-reopen flicker) after you pass.
+        // Your own closes (the page's close/back buttons, or the P hotkey) are still
+        // allowed via UserClosingHand, and your-turn closes (needed for tile
+        // placement, etc.) are never suppressed.
+        internal static bool ShouldSuppressHandClose(EPage page)
+        {
+            if (page != EPage.ViewPlayerCardsPage || UserClosingHand)
+            {
+                return false;
+            }
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return false;
+                }
+                TM_GameInfo info = Singleton<GameManager>.Instance.Game?.GameInfo;
+                if (info == null)
+                {
+                    return false;
+                }
+                return info.CurrentPlayerLocalId != info.GetMyPlayerLocalId();
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
         }
 
         // "View state" / "Return": flip the board-inspection toggle so you can look
@@ -965,5 +1001,49 @@ namespace TfmCardRefresh
         {
             ActionSorter.Sort(__instance);
         }
+    }
+
+    // Suppress the automatic close of the hand while it's not your turn, so it stays
+    // open after you pass instead of closing and reopening. Both Pop overloads are
+    // patched; returning false skips the pop.
+    [HarmonyPatch(typeof(UIManager), nameof(UIManager.Pop), new[] { typeof(EPage) })]
+    internal static class SuppressHandAutoClosePatch
+    {
+        private static bool Prefix(EPage aPage)
+        {
+            return !TfmCardRefreshPlugin.ShouldSuppressHandClose(aPage);
+        }
+    }
+
+    [HarmonyPatch(typeof(UIManager), nameof(UIManager.Pop), new[] { typeof(EPage), typeof(bool) })]
+    internal static class SuppressHandAutoClose2Patch
+    {
+        private static bool Prefix(EPage aPage)
+        {
+            return !TfmCardRefreshPlugin.ShouldSuppressHandClose(aPage);
+        }
+    }
+
+    // Mark the window around a manual hand close (page close/back button) so the
+    // suppression above lets it through.
+    [HarmonyPatch(typeof(ViewPlayerCardsPage), nameof(ViewPlayerCardsPage.OnCloseAnimationComplete))]
+    internal static class ManualHandCloseAnimPatch
+    {
+        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; }
+        private static void Postfix() { TfmCardRefreshPlugin.UserClosingHand = false; }
+    }
+
+    [HarmonyPatch(typeof(ViewPlayerCardsPage), nameof(ViewPlayerCardsPage.OnBackButtonClick))]
+    internal static class ManualHandBackPatch
+    {
+        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; }
+        private static void Postfix() { TfmCardRefreshPlugin.UserClosingHand = false; }
+    }
+
+    [HarmonyPatch(typeof(ViewPlayerCardsPage), nameof(ViewPlayerCardsPage.OnCloseButtonClick))]
+    internal static class ManualHandCloseButtonPatch
+    {
+        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; }
+        private static void Postfix() { TfmCardRefreshPlugin.UserClosingHand = false; }
     }
 }

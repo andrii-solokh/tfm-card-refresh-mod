@@ -16,14 +16,14 @@ client honest and quicker to drive.
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel).
+- macOS (Apple Silicon or Intel) **or** Windows (64-bit).
 - Terraforming Mars installed via **Steam** (app id `800270`).
-- For the mod to load, the game runs under **Rosetta (x86_64)** — the installer
-  handles this automatically.
+- macOS only: the game runs under **Rosetta (x86_64)** so the mod can load (the
+  installer handles this automatically). Windows needs no such workaround.
 - Only to **rebuild** the plugin: the [.NET SDK](https://dotnet.microsoft.com/download)
   (`dotnet`).
 
-## Install
+## Install (macOS)
 
 ```sh
 git clone <this-repo-url> tfm-card-refresh-mod
@@ -44,6 +44,29 @@ running):
 
 Launch **normally from Steam** (no launch option) any time you want the stock
 game — the mod files sit inert unless launched through `run_bepinex.sh`.
+
+## Install (Windows)
+
+Windows needs none of the macOS injection workarounds (no Rosetta, no shell
+scripts). Stock BepInEx auto-injects when you launch the game normally.
+
+1. Download **BepInEx 5 (x64, Windows)**: the `BepInEx_win_x64_5.4.x.zip`
+   asset from the [BepInEx releases](https://github.com/BepInEx/BepInEx/releases).
+   Do **not** use BepInEx 6; it does not finish loading on this Unity 6 build.
+2. Find the game folder: Steam → Terraforming Mars → right-click → Manage →
+   **Browse local files**. You should see `TerraformingMars.exe`.
+3. Unzip the BepInEx archive **into that folder** (so `winhttp.dll` and the
+   `BepInEx\` folder sit next to `TerraformingMars.exe`).
+4. Launch the game once from Steam, then quit — this makes BepInEx create its
+   `BepInEx\plugins\` folder.
+5. Copy **`TfmCardRefresh.dll`** into `BepInEx\plugins\`.
+6. Launch from Steam normally. No launch option is needed.
+
+To play the **stock** game, temporarily rename or remove `winhttp.dll` from the
+game folder (or delete `BepInEx\`).
+
+> Number badges use **Ctrl** on Windows (the same key as Cmd on macOS): e.g.
+> `Ctrl`+`1` to use the first numbered card. Everything else is identical.
 
 ### Confirm it loaded
 
@@ -127,17 +150,30 @@ A game patch can rename the classes the plugin hooks. Rebuild against the update
 game DLLs:
 
 ```sh
-./build.sh
+./build.sh          # macOS: recompiles and reinstalls to BepInEx/plugins/
 ```
 
-It recompiles and reinstalls to `BepInEx/plugins/`, and errors on anything that
-moved so you know what to fix. Patches are wrapped in try/catch and fail safe, so
-a stale patch goes silent rather than crashing the game.
+On **Windows**, rebuild with the .NET SDK and copy the result into the game
+folder (adjust the game path if yours differs):
+
+```powershell
+dotnet build TfmCardRefresh5.csproj -c Release ^
+  -p:GameManaged="C:\Program Files (x86)\Steam\steamapps\common\Terraforming Mars\TerraformingMars_Data\Managed" ^
+  -p:BepInExCore="C:\Program Files (x86)\Steam\steamapps\common\Terraforming Mars\BepInEx\core"
+copy bin\Release\TfmCardRefresh.dll "C:\Program Files (x86)\Steam\steamapps\common\Terraforming Mars\BepInEx\plugins\"
+```
+
+Either way it errors on anything that moved so you know what to fix. Patches are
+wrapped in try/catch and fail safe, so a stale patch goes silent rather than
+crashing the game.
 
 ## Uninstall
 
-Delete from the game folder: `BepInEx/`, `libdoorstop.dylib`, `run_bepinex.sh`,
-`.doorstop_version`, `steam_appid.txt`. Clear the Steam launch option if set.
+- **macOS**: delete from the game folder: `BepInEx/`, `libdoorstop.dylib`,
+  `run_bepinex.sh`, `.doorstop_version`, `steam_appid.txt`. Clear the Steam
+  launch option if set.
+- **Windows**: delete from the game folder: `BepInEx\`, `winhttp.dll`,
+  `.doorstop_version` (and `doorstop_config.ini` if present).
 
 ## Why it's set up this way
 

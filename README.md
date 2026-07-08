@@ -107,10 +107,8 @@ BepInEx/config/com.experiment.tfm.cardrefresh.cfg
   `DimUnplayableInHandView`, `ShowActionAvailabilityOffTurn`,
   `SortUsableActionsFirst`, `HandReadableOffTurn`, `CardRefresh`.
 
-In-game, press **H** for a quick overlay of the current key bindings.
-
-For an in-game settings *window* (sliders/toggles you edit live), drop the
-**BepInEx.ConfigurationManager** plugin into `BepInEx/plugins/` and press F1.
+Config changes take effect on the next launch. In-game, press **H** for a quick
+overlay of the current key bindings.
 
 ## Rebuild after a game update
 

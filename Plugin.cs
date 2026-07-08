@@ -109,7 +109,8 @@ namespace TfmCardRefresh
             BindConfig();
             try
             {
-                new Harmony(PluginGuid).PatchAll(typeof(TfmCardRefreshPlugin).Assembly);
+                Harmony harmony = new Harmony(PluginGuid);
+                harmony.PatchAll(typeof(TfmCardRefreshPlugin).Assembly);
                 Logger.LogInfo("Harmony patches applied (keep hand readable during opponent turns).");
             }
             catch (System.Exception e)
@@ -760,6 +761,7 @@ namespace TfmCardRefresh
                         // never leaks into a later, unrelated sell.
                         PendingSellCardId = -1;
                     }
+                    StartCoroutine(ReopenHandAfterSell(cardId));
                     return;
                 }
 
@@ -768,6 +770,48 @@ namespace TfmCardRefresh
             }
             catch (System.Exception)
             {
+            }
+        }
+
+        // Selling a card via the direct-sell path leaves the hand carousel closed.
+        // Wait until the server confirms the card is gone from the hand (or a short
+        // timeout), then reopen the hand grid so you land back on the remaining cards.
+        private System.Collections.IEnumerator ReopenHandAfterSell(int soldCardId)
+        {
+            float deadline = Time.unscaledTime + 3f;
+            while (Time.unscaledTime < deadline && HandContains(soldCardId))
+            {
+                yield return null;
+            }
+            yield return new WaitForSeconds(0.15f);
+            if (UIManager.Instance.IsPageInStack(EPage.ExpandPlayerCardsPage))
+            {
+                UIManager.Instance.Pop(EPage.ExpandPlayerCardsPage);
+            }
+            UserClosedPanel = false;
+            OpenHand();
+        }
+
+        private static bool HandContains(int cardId)
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return false;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                if (game == null)
+                {
+                    return false;
+                }
+                int myId = game.GameInfo.GetMyPlayerLocalId();
+                TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(myId);
+                return board != null && board.HandCards != null && board.HandCards.Contains(cardId);
+            }
+            catch (System.Exception)
+            {
+                return false;
             }
         }
 
@@ -851,6 +895,7 @@ namespace TfmCardRefresh
         private void RefreshNumberedTargets()
         {
             _targets.Clear();
+            s_activeViewport = ActiveScrollViewport();
             try
             {
                 CardActionChoiceController choiceController = FindActiveChoiceController();
@@ -1017,10 +1062,33 @@ namespace TfmCardRefresh
             CardButton(card)?.onClick.Invoke();
         }
 
-        // True only if the WHOLE item is on screen. Cards on adjacent pages peek in
-        // from the sides (behind the paging arrows); their centre can be on-screen, so
-        // a centre test wrongly numbers them. Requiring both edges in bounds keeps the
-        // numbering to the cards fully visible on the current page.
+        // The scroll viewport (mask) of the card page being numbered, set at the top
+        // of RefreshNumberedTargets. Cards on adjacent pages peek past this mask but
+        // stay within the screen, so a screen-bounds test alone numbers them; clipping
+        // to the mask keeps numbering to the cards on the current page.
+        private static RectTransform s_activeViewport;
+        private static readonly Vector3[] s_vpCorners = new Vector3[4];
+
+        // The mask RectTransform of whichever card scroller is open, or null if none.
+        private static RectTransform ActiveScrollViewport()
+        {
+            ScrollSnapRect snap = FindActiveCardScroll();
+            if (snap == null)
+            {
+                return null;
+            }
+            ScrollRect sr = snap.GetComponent<ScrollRect>();
+            if (sr != null && sr.viewport != null)
+            {
+                return sr.viewport;
+            }
+            return snap.transform as RectTransform;
+        }
+
+        // True if the item is visible on the current page. Vertically it must sit
+        // within the screen; horizontally, when a scroller is open, the majority of it
+        // must fall inside the scroll mask so a card peeking in from the next page
+        // (only an edge showing) is not numbered.
         private static bool IsOnScreen(Transform tr)
         {
             RectTransform rt = tr as RectTransform;
@@ -1034,7 +1102,22 @@ namespace TfmCardRefresh
             float right = s_corners[2].x;
             float bottom = s_corners[0].y;
             float top = s_corners[1].y;
-            return left >= -m && right <= Screen.width + m && bottom >= -m && top <= Screen.height + m;
+            if (bottom < -m || top > Screen.height + m)
+            {
+                return false;
+            }
+            if (s_activeViewport != null)
+            {
+                s_activeViewport.GetWorldCorners(s_vpCorners);
+                float width = right - left;
+                if (width <= 0f)
+                {
+                    return false;
+                }
+                float visible = Mathf.Min(right, s_vpCorners[2].x) - Mathf.Max(left, s_vpCorners[0].x);
+                return visible >= width * 0.5f;
+            }
+            return left >= -m && right <= Screen.width + m;
         }
 
         // Order UI items top row first, then left to right (screen coords).
@@ -1169,27 +1252,25 @@ namespace TfmCardRefresh
         {
             try
             {
-                CardCostDecreaseController ctrl = null;
+                // A pooled controller can hold panels with no adjustable range while
+                // the live one holds the real steel/titanium panel, so scan every
+                // controller's panels and nudge the first genuinely adjustable one
+                // (visible, with room between its min and max).
                 foreach (CardCostDecreaseController c in
                     Object.FindObjectsByType<CardCostDecreaseController>(FindObjectsSortMode.None))
                 {
-                    if (c != null && c.isActiveAndEnabled && c.ResourceConversionPanels != null)
+                    if (c == null || c.ResourceConversionPanels == null)
                     {
-                        ctrl = c;
-                        break;
+                        continue;
                     }
-                }
-                if (ctrl == null)
-                {
-                    return false;
-                }
-                foreach (ResourceConversionPanel panel in ctrl.ResourceConversionPanels)
-                {
-                    if (panel != null && panel.gameObject.activeInHierarchy
-                        && panel.MaxResourceAmount > panel.MinResourceAmount)
+                    foreach (ResourceConversionPanel panel in c.ResourceConversionPanels)
                     {
-                        panel.SetResourceAmount(panel.CurrentAmount + delta);
-                        return true;
+                        if (panel != null && panel.gameObject.activeInHierarchy
+                            && panel.MaxResourceAmount > panel.MinResourceAmount)
+                        {
+                            panel.SetResourceAmount(panel.CurrentAmount + delta);
+                            return true;
+                        }
                     }
                 }
             }

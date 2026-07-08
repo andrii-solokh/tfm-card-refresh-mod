@@ -9,4 +9,4 @@ export DOTNET_ROLL_FORWARD=Major
 dotnet build "$DIR/TfmCardRefresh5.csproj" -c Release \
   -p:GameManaged="$GAME_MANAGED" -p:BepInExCore="$BEPINEX_CORE"
 cp "$DIR/bin/Release/TfmCardRefresh.dll" "$GAME/BepInEx/plugins/"
-echo "Rebuilt and installed to BepInEx/plugins/."
+echo "Rebuilt and reinstalled into BepInEx/plugins/. Relaunch the game to load it."

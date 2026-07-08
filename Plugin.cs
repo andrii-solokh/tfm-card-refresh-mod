@@ -749,34 +749,28 @@ namespace TfmCardRefresh
                 {
                     return;
                 }
-                int myId = game.GameInfo.GetMyPlayerLocalId();
-
-                // Order: you first, then the other players by ascending local id.
-                List<int> ids = new List<int>(tabs.PlayerTabs.Keys);
-                ids.Sort();
-                List<int> ordered = new List<int>();
-                if (ids.Contains(myId))
+                // Order by the tabs' current on-screen position (the live turn order),
+                // top to bottom then left to right, so 1/2/3 track the displayed list.
+                List<KeyValuePair<int, HUD_PlayerTab>> pairs = new List<KeyValuePair<int, HUD_PlayerTab>>();
+                foreach (KeyValuePair<int, HUD_PlayerTab> kv in tabs.PlayerTabs)
                 {
-                    ordered.Add(myId);
-                }
-                foreach (int id in ids)
-                {
-                    if (id != myId)
+                    if (kv.Value != null && kv.Value.isActiveAndEnabled)
                     {
-                        ordered.Add(id);
+                        pairs.Add(kv);
                     }
                 }
+                pairs.Sort((a, b) =>
+                {
+                    int cy = b.Value.transform.position.y.CompareTo(a.Value.transform.position.y);
+                    return cy != 0 ? cy : a.Value.transform.position.x.CompareTo(b.Value.transform.position.x);
+                });
 
-                if (index < 0 || index >= ordered.Count)
+                if (index < 0 || index >= pairs.Count)
                 {
                     return;
                 }
-                HUD_PlayerTab tab = tabs.GetHudPlayer(ordered[index]);
-                if (tab != null)
-                {
-                    tab.OnClickIdentifierPannel();
-                    RebindOpenStatPopup(ordered[index]);
-                }
+                pairs[index].Value.OnClickIdentifierPannel();
+                RebindOpenStatPopup(pairs[index].Key);
             }
             catch (System.Exception)
             {

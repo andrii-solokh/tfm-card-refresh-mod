@@ -41,6 +41,7 @@ namespace TfmCardRefresh
         private const float PollIntervalSeconds = 0.25f;
 
         private float _elapsed;
+        private float _targetsElapsed;
         private int _lastPlayer = int.MinValue;
         private int _lastEvents = int.MinValue;
         private bool _prevIsMyTurn;
@@ -49,7 +50,8 @@ namespace TfmCardRefresh
 
         // ---- Config: rebindable keys (edit BepInEx/config/<guid>.cfg) ----
         internal static ConfigEntry<KeyCode> KeyProjects, KeyActions, KeyResources, KeyVictoryPoints,
-            KeyEffects, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm, KeyNavUp, KeyNavDown, KeyOverlay;
+            KeyEffects, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm,
+            KeyNavUp, KeyNavDown, KeyNavLeft, KeyNavRight, KeyOverlay;
 
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
@@ -79,6 +81,8 @@ namespace TfmCardRefresh
             KeyConfirm = Config.Bind("Keys", "Confirm", KeyCode.Space, "Confirm the default button of the open dialog/card");
             KeyNavUp = Config.Bind("Keys", "NavigateUp", KeyCode.UpArrow, "Move selection up in a choice list");
             KeyNavDown = Config.Bind("Keys", "NavigateDown", KeyCode.DownArrow, "Move selection down in a choice list");
+            KeyNavLeft = Config.Bind("Keys", "NavigateLeft", KeyCode.LeftArrow, "Previous card page / left in a choice list");
+            KeyNavRight = Config.Bind("Keys", "NavigateRight", KeyCode.RightArrow, "Next card page / right in a choice list");
             KeyOverlay = Config.Bind("Keys", "Overlay", KeyCode.H, "Toggle the on-screen hotkey overlay");
 
             FeatHotkeys = Config.Bind("Features", "Hotkeys", true, "Master switch for all keyboard shortcuts");
@@ -183,10 +187,14 @@ namespace TfmCardRefresh
 
         private void Update()
         {
-            // Space presses the focused card's own action button (Buy / Use /
-            // Select, whichever the game has wired for the current context).
-            // Checked every frame; the throttle below only gates the poll.
-            RefreshNumberedTargets();
+            // Recompute the numbered items a few times a second (not every frame:
+            // FindObjectsByType scans the whole scene and was causing lag).
+            _targetsElapsed += Time.unscaledDeltaTime;
+            if (_targetsElapsed >= 0.12f)
+            {
+                _targetsElapsed = 0f;
+                RefreshNumberedTargets();
+            }
             HandleSpaceToConfirm();
             HandleHotkeys();
 
@@ -313,6 +321,16 @@ namespace TfmCardRefresh
             if (Input.GetKeyDown(Key(KeyNavDown, KeyCode.DownArrow)))
             {
                 NavigateChoice(down: true);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyNavLeft, KeyCode.LeftArrow)))
+            {
+                NavigateHorizontal(right: false);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyNavRight, KeyCode.RightArrow)))
+            {
+                NavigateHorizontal(right: true);
                 return;
             }
             if (Input.GetKeyDown(Key(KeyProjects, KeyCode.P)))
@@ -867,6 +885,26 @@ namespace TfmCardRefresh
                         : System.Math.Max(position - 1, 0);
                 }
                 t.Method("OnChoiceClicked", indices[newPosition]).GetValue();
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Left/Right: page the open card carousel (ExpandPlayerCardsPage); if none
+        // is open, fall back to moving the SELECT ONE choice highlight.
+        private void NavigateHorizontal(bool right)
+        {
+            try
+            {
+                ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+                if (page != null && page.ScrollSnapRect != null)
+                {
+                    int current = Traverse.Create(page.ScrollSnapRect).Field("_currentPage").GetValue<int>();
+                    page.ScrollSnapRect.LerpToPage(current + (right ? 1 : -1));
+                    return;
+                }
+                NavigateChoice(down: right);
             }
             catch (System.Exception)
             {

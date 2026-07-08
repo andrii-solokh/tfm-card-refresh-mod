@@ -822,6 +822,39 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // Hand browse grid (ViewPlayerCardsPage): number opens the card (or
+                // presses its Select button if it has one). Enumerate the page's own
+                // card list so board/tray cards are never numbered.
+                ViewPlayerCardsPage viewPage = Object.FindFirstObjectByType<ViewPlayerCardsPage>();
+                if (viewPage != null)
+                {
+                    System.Collections.IEnumerable cardObjs =
+                        Traverse.Create(viewPage).Field("m_CardObjects").GetValue() as System.Collections.IEnumerable;
+                    List<CardPreview> grid = new List<CardPreview>();
+                    if (cardObjs != null)
+                    {
+                        foreach (object o in cardObjs)
+                        {
+                            if (o is CardPreview cp && cp.isActiveAndEnabled)
+                            {
+                                grid.Add(cp);
+                            }
+                        }
+                    }
+                    SortByScreenPosition(grid);
+                    foreach (CardPreview c in grid)
+                    {
+                        CardPreview card = c;
+                        Button btn = CardButton(card);
+                        _targets.Add((card.transform,
+                            btn != null ? (System.Action)(() => btn.onClick.Invoke()) : (() => card.ExpandCardToView())));
+                    }
+                    if (_targets.Count > 0)
+                    {
+                        return;
+                    }
+                }
+
                 // Any card with an active, interactable Select/Use/Buy button: the
                 // hand carousel, buy/discard/keep selection, etc. Ordered top row
                 // first, then left to right. Number presses that card's own button.
@@ -872,6 +905,19 @@ namespace TfmCardRefresh
         private static void PressCardButton(BaseCardPreview card)
         {
             CardButton(card)?.onClick.Invoke();
+        }
+
+        // Order UI items top row first, then left to right (screen coords).
+        private static void SortByScreenPosition<T>(List<T> items) where T : Component
+        {
+            items.Sort((a, b) =>
+            {
+                float ay = Mathf.Round(a.transform.position.y / 40f);
+                float by = Mathf.Round(b.transform.position.y / 40f);
+                return ay != by
+                    ? by.CompareTo(ay)
+                    : a.transform.position.x.CompareTo(b.transform.position.x);
+            });
         }
 
         private void ActivateNumberedTarget(int zeroBasedIndex)

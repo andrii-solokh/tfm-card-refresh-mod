@@ -936,6 +936,7 @@ namespace TfmCardRefresh
                     case EPage.CardSelectionPage:
                     case EPage.SellPatentPopupPage:
                     case EPage.StealResourcePage:
+                    case EPage.PlayerCardResourcePage:
                         return true;
                 }
                 return Object.FindFirstObjectByType<GenericPopup>() != null
@@ -1018,6 +1019,25 @@ namespace TfmCardRefresh
                 if (sellPage != null && AddSelectableCardPreviews(sellPage, "m_AllCardPreviews"))
                 {
                     return;
+                }
+
+                // "Select any resource" card-resource list: number selects that row.
+                PlayerCardResourcePage resPage = Object.FindFirstObjectByType<PlayerCardResourcePage>();
+                if (resPage != null)
+                {
+                    foreach (CardResourceElement row in CardResourceRows(resPage))
+                    {
+                        CardResourceElement r = row;
+                        Button b = r.GetComponent<Button>();
+                        if (b != null)
+                        {
+                            _targets.Add((r.transform, () => b.onClick.Invoke()));
+                        }
+                    }
+                    if (_targets.Count > 0)
+                    {
+                        return;
+                    }
                 }
 
                 // Hand browse grid (ViewPlayerCardsPage): number opens the card (or
@@ -1115,6 +1135,65 @@ namespace TfmCardRefresh
                 _targets.Add((card.transform, () => card.OnSelectCard()));
             }
             return _targets.Count > 0;
+        }
+
+        // The selectable rows of a card-resource page ("SELECT ANY RESOURCE"),
+        // top to bottom, filtered to the ones you can actually pick.
+        private static List<CardResourceElement> CardResourceRows(PlayerCardResourcePage page)
+        {
+            List<CardResourceElement> rows = new List<CardResourceElement>();
+            System.Collections.IEnumerable els =
+                Traverse.Create(page).Field("m_CardResourceElements").GetValue() as System.Collections.IEnumerable;
+            if (els != null)
+            {
+                foreach (object o in els)
+                {
+                    if (o is CardResourceElement e && e.isActiveAndEnabled && IsOnScreen(e.transform))
+                    {
+                        Button b = e.GetComponent<Button>();
+                        if (b != null && b.interactable)
+                        {
+                            rows.Add(e);
+                        }
+                    }
+                }
+            }
+            SortByScreenPosition(rows);
+            return rows;
+        }
+
+        // Up/Down move the highlighted row on a card-resource page. Returns true if
+        // such a page is open (so the arrows don't fall through to other handlers).
+        private static bool NavigateCardResource(bool down)
+        {
+            try
+            {
+                PlayerCardResourcePage page = Object.FindFirstObjectByType<PlayerCardResourcePage>();
+                if (page == null)
+                {
+                    return false;
+                }
+                List<CardResourceElement> rows = CardResourceRows(page);
+                if (rows.Count > 0)
+                {
+                    int selected = Traverse.Create(page).Field("m_SelectedCardID").GetValue<int>();
+                    int idx = rows.FindIndex(r => r.CardID == selected);
+                    if (idx < 0)
+                    {
+                        idx = 0;
+                    }
+                    int next = Mathf.Clamp(idx + (down ? 1 : -1), 0, rows.Count - 1);
+                    if (next != idx)
+                    {
+                        rows[next].GetComponent<Button>()?.onClick.Invoke();
+                    }
+                }
+                return true;
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
         }
 
         // The card's own Select/Use/Buy button, only if it is currently clickable.
@@ -1379,6 +1458,11 @@ namespace TfmCardRefresh
         {
             // Up = more, Down = less on any open amount / payment panel.
             if (AdjustConversion(down ? -1 : 1) || AdjustDecreaseCost(down ? -1 : 1))
+            {
+                return;
+            }
+            // Up/Down move the highlighted row on the "select any resource" list.
+            if (NavigateCardResource(down))
             {
                 return;
             }
@@ -1663,6 +1747,15 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // "Select any resource" card-resource page: Space confirms the row.
+                PlayerCardResourcePage resPage = Object.FindFirstObjectByType<PlayerCardResourcePage>();
+                if (resPage != null)
+                {
+                    resPage.Confirm();
+                    ClearUiFocus();
+                    return;
+                }
+
                 // Sell Patents popup: Space presses Sell when at least the minimum
                 // number of cards is selected (SellButton is interactable).
                 SellPatentPopupPage sellPage = Object.FindFirstObjectByType<SellPatentPopupPage>();
@@ -1689,6 +1782,10 @@ namespace TfmCardRefresh
                 ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
                 if (page == null)
                 {
+                    // Nothing else is open: Space passes / skips / ends your turn via
+                    // the board's end-turn button, so you can end a turn from the
+                    // keyboard the same way Enter does.
+                    TryEndTurn();
                     return;
                 }
                 int currentCardId = Traverse.Create(page).Field("m_CurrentCardID").GetValue<int>();
@@ -1712,6 +1809,23 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
                 // Non-fatal: ignore the keypress if anything is unexpected.
+            }
+        }
+
+        // Press the board's end-turn button (labelled Pass / Skip / End Turn by the
+        // game depending on actions left), only when it is actually shown.
+        private static void TryEndTurn()
+        {
+            try
+            {
+                HUD_EndTurnPanel panel = Object.FindFirstObjectByType<HUD_EndTurnPanel>();
+                if (panel != null && panel.IsEnabled)
+                {
+                    panel.OnEndTurnSelected();
+                }
+            }
+            catch (System.Exception)
+            {
             }
         }
 

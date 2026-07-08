@@ -68,9 +68,10 @@ Chainloader startup complete
 ## Hotkeys
 
 `Space` confirms the "SELECT ONE" popup, else an open dialog's Yes/OK, else
-Buy/Use/Select the focused card. `Up`/`Down` move the highlighted option in a
-SELECT ONE popup. Letters/numbers toggle panels (work off-turn; suppressed only
-while you're actively typing in chat):
+Buy/Use/Select the focused card, and with nothing open it passes / skips / ends
+your turn (the board's end-turn button). `Up`/`Down` move the highlighted option
+in a SELECT ONE popup or resource list. Letters/numbers toggle panels (work
+off-turn; suppressed only while you're actively typing in chat):
 
 | Key | Action |
 |-----|--------|

@@ -107,8 +107,13 @@ namespace TfmCardRefresh
             }
         }
 
+        private static GUIStyle s_numberStyle;
+
         private void OnGUI()
         {
+            GUI.skin.label.richText = true;
+            DrawNumberBadges();
+
             if (!_showOverlay)
             {
                 return;
@@ -135,8 +140,45 @@ namespace TfmCardRefresh
             {
                 GUILayout.Label("  " + Key(key, fallback).ToString().PadRight(11) + label);
             }
-            GUILayout.Label("  " + "1-4".PadRight(11) + "Focus player (1 = you)");
+            GUILayout.Label("  " + "1-9".PadRight(11) + "Use numbered card/action");
+            GUILayout.Label("  " + "Cmd/Ctrl+1-4".PadRight(11) + "Focus player (1 = you)");
             GUILayout.EndArea();
+        }
+
+        // Draw a yellow number over each current clickable item (SELECT ONE choices
+        // or actions). Assumes a screen-space-overlay canvas (item.position is in
+        // screen pixels); Y is flipped for IMGUI's top-left origin.
+        private void DrawNumberBadges()
+        {
+            if (_targets.Count == 0)
+            {
+                return;
+            }
+            if (s_numberStyle == null)
+            {
+                s_numberStyle = new GUIStyle
+                {
+                    fontSize = 22,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter,
+                };
+            }
+            for (int i = 0; i < _targets.Count && i < 9; i++)
+            {
+                Transform tr = _targets[i].t;
+                if (tr == null)
+                {
+                    continue;
+                }
+                Vector3 p = tr.position;
+                Rect rect = new Rect(p.x - 16f, (Screen.height - p.y) - 16f, 32f, 32f);
+                string text = (i + 1).ToString();
+                GUI.color = Color.black;
+                GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, s_numberStyle);
+                GUI.color = Color.yellow;
+                GUI.Label(rect, text, s_numberStyle);
+                GUI.color = Color.white;
+            }
         }
 
         private void Update()
@@ -144,6 +186,7 @@ namespace TfmCardRefresh
             // Space presses the focused card's own action button (Buy / Use /
             // Select, whichever the game has wired for the current context).
             // Checked every frame; the throttle below only gates the poll.
+            RefreshNumberedTargets();
             HandleSpaceToConfirm();
             HandleHotkeys();
 
@@ -297,11 +340,19 @@ namespace TfmCardRefresh
                 ToggleBoardView();
                 return;
             }
-            for (int n = 0; n < 4; n++)
+            for (int n = 0; n < 9; n++)
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
                 {
-                    FocusPlayer(n);
+                    // Bare number = pick the numbered card/action; Cmd/Ctrl+number = focus player.
+                    if (PlayerFocusModifierHeld())
+                    {
+                        FocusPlayer(n);
+                    }
+                    else
+                    {
+                        ActivateNumberedTarget(n);
+                    }
                     return;
                 }
             }
@@ -608,7 +659,93 @@ namespace TfmCardRefresh
                 if (tab != null)
                 {
                     tab.OnClickIdentifierPannel();
+                    RebindOpenStatPopup(ordered[index]);
                 }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // The Card* stat popups are bound to the player they were opened for. After
+        // switching the focused player, reopen an open one for the new player so it
+        // shows the new player's values instead of the original's.
+        private static readonly EPage[] s_statPopups =
+        {
+            EPage.CardActionsPopup, EPage.CardEffectsPopup, EPage.CardResourcesPopup,
+            EPage.CardVictoryPointsPopup, EPage.CardTagsPopup,
+        };
+
+        private static void RebindOpenStatPopup(int playerLocalId)
+        {
+            foreach (EPage page in s_statPopups)
+            {
+                if (UIManager.Instance.IsPageInStack(page))
+                {
+                    UIManager.Instance.Pop(page, aAddToHistory: false);
+                    UIManager.Instance.Push(page, keepPreviousPagesVisible: true, IntValuePageParameters.Create(playerLocalId));
+                    return;
+                }
+            }
+        }
+
+        // Numbered, clickable items for the current context (recomputed each frame):
+        // the SELECT ONE choices, else the actions popup's actions. Number keys
+        // activate them; OnGUI draws a number over each.
+        private readonly List<(Transform t, System.Action act)> _targets = new List<(Transform, System.Action)>();
+
+        private static bool PlayerFocusModifierHeld()
+        {
+            return Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand)
+                || Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+        }
+
+        private void RefreshNumberedTargets()
+        {
+            _targets.Clear();
+            try
+            {
+                CardActionChoiceController choiceController = FindActiveChoiceController();
+                if (choiceController != null)
+                {
+                    Traverse ct = Traverse.Create(choiceController);
+                    System.Collections.IList choices = ct.Field("m_CardActionChoices").GetValue() as System.Collections.IList;
+                    if (choices != null)
+                    {
+                        foreach (object choice in choices)
+                        {
+                            int idx = Traverse.Create(choice).Property("Index").GetValue<int>();
+                            Transform tr = Traverse.Create(choice).Property("transform").GetValue<Transform>();
+                            _targets.Add((tr, () => ct.Method("OnChoiceClicked", idx).GetValue()));
+                        }
+                    }
+                    return;
+                }
+
+                CardActionsPopup actionsPopup = Object.FindFirstObjectByType<CardActionsPopup>();
+                if (actionsPopup != null)
+                {
+                    foreach (CardActionElement element in actionsPopup.GetComponentsInChildren<CardActionElement>())
+                    {
+                        CardActionElement el = element;
+                        _targets.Add((el.transform, () => el.OnActionButtonTriggered()));
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        private void ActivateNumberedTarget(int zeroBasedIndex)
+        {
+            if (zeroBasedIndex < 0 || zeroBasedIndex >= _targets.Count)
+            {
+                return;
+            }
+            try
+            {
+                _targets[zeroBasedIndex].act();
             }
             catch (System.Exception)
             {

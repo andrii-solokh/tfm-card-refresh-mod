@@ -47,6 +47,10 @@
       <HintPath>$(GameManaged)/UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(GameManaged)/UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="TerraformingMars">
       <HintPath>$(GameManaged)/TerraformingMars.dll</HintPath>
       <Private>false</Private>

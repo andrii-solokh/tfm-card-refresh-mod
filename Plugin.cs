@@ -413,8 +413,10 @@ namespace TfmCardRefresh
                 }
                 return;
             }
-            // Bare keys below can be typed into a field, so suppress while one is focused.
-            if (IsTextInputFocused())
+            // Bare keys below can be typed into a field, so suppress while one is
+            // focused, except when a mod-driven dialog is open: the game auto-focuses
+            // chat after a keyboard confirm, and Space/arrows must keep working there.
+            if (IsTextInputFocused() && !ModDialogOpen())
             {
                 return;
             }
@@ -914,6 +916,35 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
                 return (EPage)(-1);
+            }
+        }
+
+        // True when the mod is driving an interactive dialog (card play, card/discard
+        // selection, steal target, a choice/conversion panel, or a confirm popup). In
+        // that state keyboard hotkeys must win over text-field focus: the game auto-
+        // focuses its chat field after a keyboard confirm, which would otherwise block
+        // Space/arrows until you click. Chat still suppresses hotkeys during free play.
+        private static bool ModDialogOpen()
+        {
+            try
+            {
+                // Only the transient action dialogs, not the long-lived hand / actions
+                // panels, so chat still works during normal play on your board.
+                switch (TopPage())
+                {
+                    case EPage.ExpandPlayerCardsPage:
+                    case EPage.CardSelectionPage:
+                    case EPage.SellPatentPopupPage:
+                    case EPage.StealResourcePage:
+                        return true;
+                }
+                return Object.FindFirstObjectByType<GenericPopup>() != null
+                    || FindActiveConversionController() != null
+                    || FindActiveChoiceController() != null;
+            }
+            catch (System.Exception)
+            {
+                return false;
             }
         }
 
@@ -1548,19 +1579,29 @@ namespace TfmCardRefresh
             return false;
         }
 
-        // After a keyboard confirm, Unity leaves the pressed button as the selected
-        // object, so the game keeps routing the next Submit (Space/Enter) to that now
-        // stale element until you click elsewhere. Clearing the selection restores
-        // keyboard control on the screen that opens next without needing a click.
+        // After a keyboard confirm (the game's own Enter, or the mod's Space), Unity
+        // leaves the pressed button selected, so the game keeps routing the next
+        // Submit/Move (Space, Enter, arrows) to that stale element until you click
+        // elsewhere. Deselect it so keyboard control returns without a click. Text
+        // fields are left selected so chat typing still works.
         private static void ClearUiFocus()
         {
             try
             {
                 EventSystem es = EventSystem.current;
-                if (es != null && es.currentSelectedGameObject != null)
+                GameObject selected = (es != null) ? es.currentSelectedGameObject : null;
+                if (selected == null)
                 {
-                    es.SetSelectedGameObject(null);
+                    return;
                 }
+                foreach (MonoBehaviour component in selected.GetComponents<MonoBehaviour>())
+                {
+                    if (component != null && component.GetType().Name.Contains("InputField"))
+                    {
+                        return; // a text field is focused; leave it for typing
+                    }
+                }
+                es.SetSelectedGameObject(null);
             }
             catch (System.Exception)
             {
@@ -1569,7 +1610,8 @@ namespace TfmCardRefresh
 
         private void HandleSpaceToConfirm()
         {
-            if (!On(FeatHotkeys) || !Input.GetKeyDown(Key(KeyConfirm, KeyCode.Space)) || IsTextInputFocused())
+            if (!On(FeatHotkeys) || !Input.GetKeyDown(Key(KeyConfirm, KeyCode.Space))
+                || (IsTextInputFocused() && !ModDialogOpen()))
             {
                 return;
             }

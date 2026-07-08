@@ -194,13 +194,25 @@ namespace TfmCardRefresh
 
         private void Update()
         {
-            // Recompute the numbered items a few times a second (not every frame:
-            // FindObjectsByType scans the whole scene and was causing lag).
-            _targetsElapsed += Time.unscaledDeltaTime;
-            if (_targetsElapsed >= 0.12f)
+            // Only scan for numbered items while Cmd/Ctrl is held (the only time the
+            // badges show and number-select is used). FindObjectsByType scans the
+            // whole scene, so running it every frame lagged the game.
+            if (ModifierHeld())
             {
-                _targetsElapsed = 0f;
-                RefreshNumberedTargets();
+                _targetsElapsed += Time.unscaledDeltaTime;
+                if (_targetsElapsed >= 0.1f)
+                {
+                    _targetsElapsed = 0f;
+                    RefreshNumberedTargets();
+                }
+            }
+            else
+            {
+                _targetsElapsed = 0.1f; // next modifier press refreshes immediately
+                if (_targets.Count > 0)
+                {
+                    _targets.Clear();
+                }
             }
             HandleSpaceToConfirm();
             HandleHotkeys();

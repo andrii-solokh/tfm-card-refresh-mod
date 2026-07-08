@@ -2094,13 +2094,12 @@ namespace TfmCardRefresh
 
     // CardPreview skips the playability evaluation in the read-only hand view
     // (ViewOnly) and in the buy / draft picker (BuyCard / SelectCard), so every
-    // card shows at full brightness even when its requirements are not met (e.g. a
-    // card needing >= 4C temperature). Dim the cards whose requirements are not
-    // currently satisfied so playable and unplayable read apart there too.
-    // Requirements (temperature, oxygen, oceans, tags, resources on cards) are
-    // turn-independent, so this is accurate at any time. Affordability is
-    // intentionally left out: cost can be paid with steel/titanium, so a pure
-    // megacredit check would wrongly dim payable cards.
+    // card shows at full brightness even when it cannot be played. Dim the ones
+    // that are not currently playable so playable and unplayable read apart there.
+    // In the hand view "not playable" means unmet requirements (temperature,
+    // oxygen, oceans, tags, resources) OR unaffordable after steel/titanium/heat.
+    // In the buy / draft picker only requirements are used: you are paying to
+    // acquire the card, not to play it now, so its play cost is not the gate.
     [HarmonyPatch(typeof(CardPreview), "HandleState", new[] { typeof(ECardState) })]
     internal static class ShowHandPlayabilityInViewPatch
     {
@@ -2138,9 +2137,15 @@ namespace TfmCardRefresh
                     }
                 }
                 TM_ProjectCardData project = __instance.CardData as TM_ProjectCardData;
-                if (project == null || project.ValidateAllRequirements(game, playerId))
+                if (project == null)
                 {
-                    return; // requirements met (or not a project card) -> leave bright
+                    return; // not a project card -> leave bright
+                }
+                bool unmetRequirements = !project.ValidateAllRequirements(game, playerId);
+                bool unaffordable = handView && !CanAffordCard(game, playerId, project);
+                if (!unmetRequirements && !unaffordable)
+                {
+                    return; // playable (and, in hand, affordable) -> leave bright
                 }
                 CanvasGroup canvasGroup =
                     Traverse.Create(__instance).Field("m_CardPreviewCanvasGroup").GetValue<CanvasGroup>();
@@ -2152,6 +2157,36 @@ namespace TfmCardRefresh
             }
             catch (System.Exception)
             {
+            }
+        }
+
+        // Whether the player can pay this card's cost with megacredits plus the
+        // resources that actually apply to it: steel on Building cards, titanium on
+        // Space cards, and heat when the player may pay with heat. Mirrors the game's
+        // own cost math (ActionCostEvaluator), so a card payable with steel/titanium
+        // is not wrongly dimmed. On any doubt returns true (do not dim).
+        private static bool CanAffordCard(TM_Game game, int playerId, TM_ProjectCardData card)
+        {
+            try
+            {
+                TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(playerId);
+                if (board == null)
+                {
+                    return true;
+                }
+                int steel = (card.Tags != null && card.Tags.Contains(ETagType.Building))
+                    ? board.ResourceBank[EResourceType.Steel].Quantity : 0;
+                int titanium = (card.Tags != null && card.Tags.Contains(ETagType.Space))
+                    ? board.ResourceBank[EResourceType.Titanium].Quantity : 0;
+                int heat = board.PassiveValues != null && board.PassiveValues.CanPayWithHeat
+                    ? board.ResourceBank[EResourceType.Heat].Quantity : 0;
+                int remaining = ActionCostEvaluator.GetCardCost(
+                    game, playerId, card.CardId, steel, titanium, heat, 0, 0, 0);
+                return remaining <= board.ResourceBank[EResourceType.MegaCredit].Quantity;
+            }
+            catch (System.Exception)
+            {
+                return true;
             }
         }
     }

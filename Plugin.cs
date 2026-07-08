@@ -1032,10 +1032,11 @@ namespace TfmCardRefresh
         // panel keys are discoverable. Refreshed on the same cadence as _targets.
         private readonly List<(Transform t, string label)> _keyHints = new List<(Transform, string)>();
 
-        // The three top tab buttons cached once (they live for the whole game), so the
-        // hint refresh doesn't scan the scene every time.
-        private readonly List<(HUD_TopActionButton btn, string label)> _tabButtons =
-            new List<(HUD_TopActionButton, string)>();
+        // Every HUD button whose key we hint (top tabs, tray stat popups, hand,
+        // conversions, board toggle), cached once since they live for the whole game,
+        // so the hint refresh doesn't scan the scene every time.
+        private readonly List<(Transform t, string label)> _hintTargets =
+            new List<(Transform, string)>();
 
         private static bool ModifierHeld()
         {
@@ -1109,16 +1110,15 @@ namespace TfmCardRefresh
             _keyHints.Clear();
             try
             {
-                EnsureTabButtonsCached();
-                // Draw the hint for every tab that is currently on screen. Use
-                // activeInHierarchy (visible) rather than isActiveAndEnabled: a tab you
-                // can't act on yet is greyed (component disabled) but still openable,
-                // so its key should still show, not just Standard Projects.
-                foreach ((HUD_TopActionButton btn, string label) in _tabButtons)
+                EnsureHintTargetsCached();
+                // Draw the hint for every target currently on screen. activeInHierarchy
+                // (visible) rather than isActiveAndEnabled: a greyed-but-openable button
+                // still shows its key.
+                foreach ((Transform t, string label) in _hintTargets)
                 {
-                    if (btn != null && btn.gameObject.activeInHierarchy)
+                    if (t != null && t.gameObject.activeInHierarchy)
                     {
-                        _keyHints.Add((btn.transform, label));
+                        _keyHints.Add((t, label));
                     }
                 }
             }
@@ -1127,14 +1127,15 @@ namespace TfmCardRefresh
             }
         }
 
-        // Find the three top tab buttons once and cache them. Re-find only if the
-        // cache is empty or a cached button was destroyed (e.g. leaving the game).
-        private void EnsureTabButtonsCached()
+        // Find every hinted HUD button once and cache it. Re-find only if the cache is
+        // empty or a cached target was destroyed (e.g. leaving the game). Waits for the
+        // tray to exist so the whole set is cached together, not a partial set.
+        private void EnsureHintTargetsCached()
         {
-            bool valid = _tabButtons.Count > 0;
-            for (int i = 0; i < _tabButtons.Count; i++)
+            bool valid = _hintTargets.Count > 0;
+            for (int i = 0; i < _hintTargets.Count; i++)
             {
-                if (_tabButtons[i].btn == null)
+                if (_hintTargets[i].t == null)
                 {
                     valid = false;
                     break;
@@ -1144,19 +1145,85 @@ namespace TfmCardRefresh
             {
                 return;
             }
-            _tabButtons.Clear();
-            foreach (HUD_TopActionButton b in
-                Object.FindObjectsByType<HUD_TopActionButton>(FindObjectsSortMode.None))
+            TM_Game game = Singleton<GameManager>.Instance.Game;
+            if (game == null || game.HUD == null || game.HUD.PlayerTray == null)
             {
-                if (b == null)
+                return; // HUD not fully built yet; try again next refresh
+            }
+            _hintTargets.Clear();
+            try
+            {
+                // Top tabs: Milestones / Standard Projects / Awards.
+                foreach (HUD_TopActionButton b in
+                    Object.FindObjectsByType<HUD_TopActionButton>(FindObjectsSortMode.None))
                 {
-                    continue;
+                    string label = (b != null) ? KeyForActionType(b.GetActionType()) : null;
+                    if (label != null)
+                    {
+                        _hintTargets.Add((b.transform, label));
+                    }
                 }
-                string label = KeyForActionType(b.GetActionType());
-                if (label != null)
+                // Tray stat popups: Actions / Resources / Victory points / Effects.
+                foreach (HUD_TogglePopupButton b in
+                    Object.FindObjectsByType<HUD_TogglePopupButton>(FindObjectsSortMode.None))
                 {
-                    _tabButtons.Add((b, label));
+                    string label = (b != null) ? KeyForPage(b.GetPageType()) : null;
+                    if (label != null)
+                    {
+                        _hintTargets.Add((b.transform, label));
+                    }
                 }
+                // Tray hand + conversion buttons.
+                HUD_PlayerTray tray = game.HUD.PlayerTray;
+                AddFieldTarget(tray, "m_CardHand", Key(KeyProjects, KeyCode.P).ToString());
+                AddFieldTarget(tray, "m_PlantConversion", Key(KeyGreenery, KeyCode.G).ToString());
+                AddFieldTarget(tray, "m_HeatConversion", Key(KeyTemperature, KeyCode.T).ToString());
+                // Board-view toggle.
+                HUD_CheckGameStateToggle boardToggle = game.HUD.CheckGameStateToggle;
+                if (boardToggle != null)
+                {
+                    _hintTargets.Add((boardToggle.transform, Key(KeyBoard, KeyCode.B).ToString()));
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Add a hint anchored on a private tray field (a GameObject or a Component),
+        // via reflection, so we don't hard-depend on its exact type.
+        private void AddFieldTarget(object owner, string field, string label)
+        {
+            try
+            {
+                object value = Traverse.Create(owner).Field(field).GetValue();
+                Transform t = (value as Component)?.transform ?? (value as GameObject)?.transform;
+                if (t != null)
+                {
+                    _hintTargets.Add((t, label));
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // The configured key for a tray stat-popup page, or null if that popup has no
+        // hotkey (e.g. the tags popup, which lost its key when T became temperature).
+        private static string KeyForPage(EPage page)
+        {
+            switch (page)
+            {
+                case EPage.CardActionsPopup:
+                    return Key(KeyActions, KeyCode.A).ToString();
+                case EPage.CardResourcesPopup:
+                    return Key(KeyResources, KeyCode.R).ToString();
+                case EPage.CardVictoryPointsPopup:
+                    return Key(KeyVictoryPoints, KeyCode.V).ToString();
+                case EPage.CardEffectsPopup:
+                    return Key(KeyEffects, KeyCode.E).ToString();
+                default:
+                    return null;
             }
         }
 

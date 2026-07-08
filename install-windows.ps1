@@ -28,7 +28,10 @@ function Find-GameFolder {
 
     foreach ($lib in ($libraries | Select-Object -Unique)) {
         $game = Join-Path $lib 'steamapps\common\Terraforming Mars'
-        if (Test-Path (Join-Path $game 'TerraformingMars.exe')) {
+        # Match on the (stable) Steam folder name containing a game exe, rather
+        # than a hard-coded exe name, in case the executable is named differently.
+        if ((Test-Path $game) -and
+            (Get-ChildItem -Path $game -Filter '*.exe' -File -ErrorAction SilentlyContinue)) {
             return $game
         }
     }

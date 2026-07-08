@@ -24,8 +24,9 @@ client honest and quicker to drive.
 
 You need the game installed through **Steam** first. Then:
 
-1. **Download the mod.** On the GitHub page click the green **Code** button, then
-   **Download ZIP**.
+1. **Download the mod.** Get the ZIP from the
+   [latest release](https://github.com/andrii-solokh/terraforming-mars-skip-animations/releases/latest)
+   (under **Assets**).
 2. **Unzip it** (double-click the downloaded file).
 3. **Double-click the installer** for your computer, inside the unzipped folder:
    - **macOS:** `Install (macOS).command`

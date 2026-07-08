@@ -590,6 +590,10 @@ namespace TfmCardRefresh
         // Sell cards from hand: open the game's Sell Patents UI (your hand, pick
         // cards, Sell). Same call the Standard Projects > Sell Patents button makes,
         // so it only works during your action turn. Space then confirms the sale.
+        // Card the direct-sell wants to sell, injected into the sell action's event
+        // so the Sell Patents popup is never needed. -1 = no direct sell pending.
+        internal static int PendingSellCardId = -1;
+
         private void SellFromHand()
         {
             try
@@ -607,10 +611,37 @@ namespace TfmCardRefresh
                 {
                     return;
                 }
-                if (current.TryGetAgentAsHuman(out TM_HumanAgent human))
+                if (!current.TryGetAgentAsHuman(out TM_HumanAgent human))
                 {
-                    human.HandleSelectStandardProjectSelection(EStandardProject.SellPatents, 0);
+                    return;
                 }
+
+                // If a hand card is focused, sell exactly that card with no popup.
+                int myId = game.GameInfo.GetMyPlayerLocalId();
+                TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(myId);
+                ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+                int cardId = (page != null) ? Traverse.Create(page).Field("m_CurrentCardID").GetValue<int>() : -1;
+
+                if (cardId > 0 && board != null && board.HandCards != null && board.HandCards.Contains(cardId))
+                {
+                    PlayerAction sellAction = board.PlayerActionBank.GetStandardProjectPlayerAction(EStandardProject.SellPatents);
+                    Traverse.Create(human).Field("m_SellPatentAction").SetValue(sellAction);
+                    PendingSellCardId = cardId;
+                    try
+                    {
+                        human.InvokeSelectActionCallbackForSellPatentAction();
+                    }
+                    finally
+                    {
+                        // If the action didn't consume it synchronously, clear so it
+                        // never leaks into a later, unrelated sell.
+                        PendingSellCardId = -1;
+                    }
+                    return;
+                }
+
+                // No focused card: fall back to the game's sell menu.
+                human.HandleSelectStandardProjectSelection(EStandardProject.SellPatents, 0);
             }
             catch (System.Exception)
             {
@@ -1284,5 +1315,31 @@ namespace TfmCardRefresh
     {
         private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; }
         private static void Postfix() { TfmCardRefreshPlugin.UserClosingHand = false; }
+    }
+
+    // Direct sell: when SellFromHand set a pending card, inject it into the sell
+    // action's event. With the event already carrying a card, the action's
+    // RequireInputToCompleteAction returns false, so the Sell Patents popup is
+    // never shown and exactly this one card is sold. If this postfix never fires,
+    // the event stays empty and the game just opens the popup as usual (no wrong
+    // card can be sold).
+    [HarmonyPatch(typeof(SellCardsPlayerAction), nameof(SellCardsPlayerAction.CreateActionEventSpecific))]
+    internal static class InjectDirectSellPatch
+    {
+        private static void Postfix(object __result)
+        {
+            if (TfmCardRefreshPlugin.PendingSellCardId < 0 || __result == null)
+            {
+                return;
+            }
+            Traverse trav = Traverse.Create(__result);
+            System.Collections.IList cards = trav.Field("Cards").GetValue<System.Collections.IList>()
+                ?? trav.Property("Cards").GetValue<System.Collections.IList>();
+            if (cards != null)
+            {
+                cards.Add(TfmCardRefreshPlugin.PendingSellCardId);
+                TfmCardRefreshPlugin.PendingSellCardId = -1;
+            }
+        }
     }
 }

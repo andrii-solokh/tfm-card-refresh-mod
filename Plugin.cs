@@ -98,7 +98,7 @@ namespace TfmCardRefresh
             FeatAutoOpenHand = Config.Bind("Features", "AutoOpenHandAfterPlay", true, "Reopen hand/actions after you play or pass");
             FeatKeepHandOpen = Config.Bind("Features", "KeepHandOpenOffTurn", true, "Keep the hand open across passing (suppress auto-close)");
             FeatSuppressAnnouncements = Config.Bind("Features", "SuppressAnnouncements", true, "Hide turn/phase announcement banners");
-            FeatPlayabilityDim = Config.Bind("Features", "DimUnplayableInHandView", true, "Dim requirement-locked cards in the off-turn hand view");
+            FeatPlayabilityDim = Config.Bind("Features", "DimUnplayableInHandView", true, "Dim requirement-locked cards in the off-turn hand view and the buy/draft picker");
             FeatActionAvailability = Config.Bind("Features", "ShowActionAvailabilityOffTurn", true, "Show which card actions are usable during opponents' turns");
             FeatActionSort = Config.Bind("Features", "SortUsableActionsFirst", true, "Sort usable actions to the top of the actions popup");
             FeatAutoMaxPayment = Config.Bind("Features", "AutoMaxSteelTitaniumPayment", true, "When playing a card, pre-fill steel/titanium to cover the cost (not more)");
@@ -1946,20 +1946,23 @@ namespace TfmCardRefresh
         }
     }
 
-    // When you open your hand while it is not your turn (ViewOnly state),
-    // CardPreview skips the playability evaluation, so every card shows at full
-    // brightness even when its requirements are not met (e.g. a card needing
-    // >= 4C temperature). Dim the cards in your own hand whose requirements are
-    // not currently satisfied. Requirements (temperature, oxygen, oceans, tags,
-    // resources on cards) are turn-independent, so this is accurate at any time.
-    // Affordability is intentionally left out: cost can be paid with steel/
-    // titanium, so a pure megacredit check would wrongly dim payable cards.
+    // CardPreview skips the playability evaluation in the read-only hand view
+    // (ViewOnly) and in the buy / draft picker (BuyCard / SelectCard), so every
+    // card shows at full brightness even when its requirements are not met (e.g. a
+    // card needing >= 4C temperature). Dim the cards whose requirements are not
+    // currently satisfied so playable and unplayable read apart there too.
+    // Requirements (temperature, oxygen, oceans, tags, resources on cards) are
+    // turn-independent, so this is accurate at any time. Affordability is
+    // intentionally left out: cost can be paid with steel/titanium, so a pure
+    // megacredit check would wrongly dim payable cards.
     [HarmonyPatch(typeof(CardPreview), "HandleState", new[] { typeof(ECardState) })]
     internal static class ShowHandPlayabilityInViewPatch
     {
         private static void Postfix(CardPreview __instance, ECardState aState)
         {
-            if (aState != ECardState.ViewOnly
+            bool handView = aState == ECardState.ViewOnly;
+            bool pickView = aState == ECardState.BuyCard || aState == ECardState.SelectCard;
+            if ((!handView && !pickView)
                 || !TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatPlayabilityDim))
             {
                 return;
@@ -1977,10 +1980,16 @@ namespace TfmCardRefresh
                 }
                 int playerId = __instance.PlayerID;
                 int cardId = __instance.CardId;
-                TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(playerId);
-                if (board == null || board.HandCards == null || !board.HandCards.Contains(cardId))
+                // In the hand view, only dim cards actually in this player's hand.
+                // In the buy / draft picker the shown cards are the candidates, so
+                // dim by requirements directly.
+                if (handView)
                 {
-                    return; // only dim cards actually in this player's hand
+                    TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(playerId);
+                    if (board == null || board.HandCards == null || !board.HandCards.Contains(cardId))
+                    {
+                        return;
+                    }
                 }
                 TM_ProjectCardData project = __instance.CardData as TM_ProjectCardData;
                 if (project == null || project.ValidateAllRequirements(game, playerId))

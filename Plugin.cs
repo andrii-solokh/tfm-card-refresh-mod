@@ -1298,21 +1298,24 @@ namespace TfmCardRefresh
         {
             try
             {
-                // A pooled controller can hold panels with no adjustable range while
-                // the live one holds the real steel/titanium panel, so scan every
-                // controller's panels and nudge the first genuinely adjustable one
-                // (visible, with room between its min and max).
+                // The card carousel keeps every hand card in a play state at once, so
+                // several DECREASE COST controllers are live simultaneously. Only the
+                // centred card's panel is on screen, so require the panel to be visible
+                // (an off-screen adjacent card's panel adjusts nothing the user sees).
+                // Match the game's own criterion: a panel is a candidate when its
+                // component is enabled (the resource applies) with room to move.
                 foreach (CardCostDecreaseController c in
                     Object.FindObjectsByType<CardCostDecreaseController>(FindObjectsSortMode.None))
                 {
-                    if (c == null || c.ResourceConversionPanels == null)
+                    if (c == null || !c.isActiveAndEnabled || c.ResourceConversionPanels == null)
                     {
                         continue;
                     }
                     foreach (ResourceConversionPanel panel in c.ResourceConversionPanels)
                     {
-                        if (panel != null && panel.gameObject.activeInHierarchy
-                            && panel.MaxResourceAmount > panel.MinResourceAmount)
+                        if (panel != null && panel.enabled
+                            && panel.MaxResourceAmount > panel.MinResourceAmount
+                            && IsCentreOnScreen(panel.transform))
                         {
                             panel.SetResourceAmount(panel.CurrentAmount + delta);
                             return true;
@@ -1324,6 +1327,21 @@ namespace TfmCardRefresh
             {
             }
             return false;
+        }
+
+        // True if a UI element's centre sits within the screen. Used to pick the
+        // visible one of several identical panels the carousel keeps live at once.
+        private static bool IsCentreOnScreen(Transform tr)
+        {
+            RectTransform rt = tr as RectTransform;
+            if (rt == null)
+            {
+                return true; // not a rect; don't exclude it
+            }
+            rt.GetWorldCorners(s_corners);
+            float cx = (s_corners[0].x + s_corners[2].x) * 0.5f;
+            float cy = (s_corners[0].y + s_corners[1].y) * 0.5f;
+            return cx >= 0f && cx <= Screen.width && cy >= 0f && cy <= Screen.height;
         }
 
         private void NavigateChoice(bool down)
@@ -1476,6 +1494,15 @@ namespace TfmCardRefresh
                     return s;
                 }
             }
+            SellPatentPopupPage sell = Object.FindFirstObjectByType<SellPatentPopupPage>();
+            if (sell != null)
+            {
+                ScrollSnapRect s = sell.GetComponentInChildren<ScrollSnapRect>();
+                if (s != null)
+                {
+                    return s;
+                }
+            }
             return null;
         }
 
@@ -1521,6 +1548,25 @@ namespace TfmCardRefresh
             return false;
         }
 
+        // After a keyboard confirm, Unity leaves the pressed button as the selected
+        // object, so the game keeps routing the next Submit (Space/Enter) to that now
+        // stale element until you click elsewhere. Clearing the selection restores
+        // keyboard control on the screen that opens next without needing a click.
+        private static void ClearUiFocus()
+        {
+            try
+            {
+                EventSystem es = EventSystem.current;
+                if (es != null && es.currentSelectedGameObject != null)
+                {
+                    es.SetSelectedGameObject(null);
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
         private void HandleSpaceToConfirm()
         {
             if (!On(FeatHotkeys) || !Input.GetKeyDown(Key(KeyConfirm, KeyCode.Space)) || IsTextInputFocused())
@@ -1534,6 +1580,7 @@ namespace TfmCardRefresh
                 if (conversion != null)
                 {
                     conversion.OnConfirm();
+                    ClearUiFocus();
                     return;
                 }
 
@@ -1544,6 +1591,7 @@ namespace TfmCardRefresh
                     if (Traverse.Create(choicePanel).Field("SelectedAction").GetValue<int>() >= 0)
                     {
                         choicePanel.OnConfirm();
+                        ClearUiFocus();
                     }
                     return;
                 }
@@ -1558,6 +1606,7 @@ namespace TfmCardRefresh
                     if (doneButton != null && doneButton.interactable && doneButton.gameObject.activeInHierarchy)
                     {
                         doneButton.onClick.Invoke();
+                        ClearUiFocus();
                     }
                     return;
                 }
@@ -1568,6 +1617,7 @@ namespace TfmCardRefresh
                 if (stealPage != null)
                 {
                     stealPage.Confirm();
+                    ClearUiFocus();
                     return;
                 }
 
@@ -1580,6 +1630,7 @@ namespace TfmCardRefresh
                     if (sellButton != null && sellButton.interactable && sellButton.gameObject.activeInHierarchy)
                     {
                         sellButton.onClick.Invoke();
+                        ClearUiFocus();
                     }
                     return;
                 }
@@ -1589,6 +1640,7 @@ namespace TfmCardRefresh
                 if (popup != null)
                 {
                     PressDefaultPopupButton(popup);
+                    ClearUiFocus();
                     return;
                 }
 
@@ -1610,6 +1662,7 @@ namespace TfmCardRefresh
                     if (button != null && button.interactable && button.gameObject.activeInHierarchy)
                     {
                         button.onClick.Invoke();
+                        ClearUiFocus();
                     }
                     break;
                 }

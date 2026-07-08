@@ -113,7 +113,10 @@ BepInEx/config/com.experiment.tfm.cardrefresh.cfg
 - `[Features]` — turn any feature `true`/`false`: `Hotkeys` (master switch),
   `SuppressAnnouncements`, `KeepHandOpenOffTurn`, `AutoOpenHandAfterPlay`,
   `DimUnplayableInHandView`, `ShowActionAvailabilityOffTurn`,
-  `SortUsableActionsFirst`, `HandReadableOffTurn`, `CardRefresh`.
+  `SortUsableActionsFirst`, `HandReadableOffTurn`, `CardRefresh`,
+  `PlayTurnStartSound` (ping when your turn begins, even with announcements
+  hidden). `TurnStartSound` picks the sound id (e.g. `SFX_OTHER_PLAYER_TURN`,
+  `SFX_MENU_CONFIRM`, `SFX_POPUP_OPEN`).
 
 Config changes take effect on the next launch. In-game, press **H** for a quick
 overlay of the current key bindings.

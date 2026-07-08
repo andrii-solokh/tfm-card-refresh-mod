@@ -63,7 +63,10 @@ namespace TfmCardRefresh
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
             FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys,
-            FeatAutoMaxPayment, FeatIndicator;
+            FeatAutoMaxPayment, FeatIndicator, FeatTurnSound;
+
+        // The sound played when your action turn begins (a game SFX id).
+        internal static ConfigEntry<string> TurnStartSound;
 
         internal static bool On(ConfigEntry<bool> e)
         {
@@ -107,6 +110,8 @@ namespace TfmCardRefresh
             FeatActionSort = Config.Bind("Features", "SortUsableActionsFirst", true, "Sort usable actions to the top of the actions popup");
             FeatAutoMaxPayment = Config.Bind("Features", "AutoMaxSteelTitaniumPayment", true, "When playing a card, pre-fill steel/titanium to cover the cost (not more)");
             FeatIndicator = Config.Bind("Features", "ShowRunningIndicator", true, "Show a small always-on 'mod running' marker in the corner");
+            FeatTurnSound = Config.Bind("Features", "PlayTurnStartSound", true, "Play a sound when your action turn begins (announcements stay hidden)");
+            TurnStartSound = Config.Bind("Features", "TurnStartSound", "SFX_OTHER_PLAYER_TURN", "Sound id for the turn-start ping (e.g. SFX_OTHER_PLAYER_TURN, SFX_MENU_CONFIRM, SFX_POPUP_OPEN)");
         }
 
         private void Awake()
@@ -371,6 +376,22 @@ namespace TfmCardRefresh
         // read-only hand once during the opponent's turn (after the game has closed
         // it). Only once, so a later manual close stays closed. On your own turn the
         // action-prompt patch handles opening, so this stays out of the way.
+        // Play the configured turn-start ping through the game's own audio system.
+        private static void PlayTurnStartSound()
+        {
+            try
+            {
+                string id = (TurnStartSound != null) ? TurnStartSound.Value : "SFX_OTHER_PLAYER_TURN";
+                if (!string.IsNullOrEmpty(id))
+                {
+                    LuckyHammers.Audio.AudioInterface.PlaySound(id);
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
         private void KeepHandOpenAfterPass()
         {
             try
@@ -393,6 +414,14 @@ namespace TfmCardRefresh
                 if (isMyTurn)
                 {
                     _reopenHandAfterPass = false;
+                }
+                // Ping when your action turn begins (the transition into your turn),
+                // so you notice it even though the turn banner is suppressed.
+                if (!_prevIsMyTurn && isMyTurn
+                    && game.GameFlow.CurrentPhase == EPhase.Action
+                    && On(FeatTurnSound))
+                {
+                    PlayTurnStartSound();
                 }
                 _prevIsMyTurn = isMyTurn;
 

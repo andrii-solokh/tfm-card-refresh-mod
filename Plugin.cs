@@ -60,7 +60,7 @@ namespace TfmCardRefresh
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
             FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys,
-            FeatAutoMaxPayment;
+            FeatAutoMaxPayment, FeatIndicator;
 
         internal static bool On(ConfigEntry<bool> e)
         {
@@ -100,6 +100,7 @@ namespace TfmCardRefresh
             FeatActionAvailability = Config.Bind("Features", "ShowActionAvailabilityOffTurn", true, "Show which card actions are usable during opponents' turns");
             FeatActionSort = Config.Bind("Features", "SortUsableActionsFirst", true, "Sort usable actions to the top of the actions popup");
             FeatAutoMaxPayment = Config.Bind("Features", "AutoMaxSteelTitaniumPayment", true, "When playing a card, pre-fill steel/titanium to cover the cost (not more)");
+            FeatIndicator = Config.Bind("Features", "ShowRunningIndicator", true, "Show a small always-on 'mod running' marker in the corner");
         }
 
         private void Awake()
@@ -118,10 +119,12 @@ namespace TfmCardRefresh
         }
 
         private static GUIStyle s_numberStyle;
+        private static GUIStyle s_indicatorStyle;
 
         private void OnGUI()
         {
             GUI.skin.label.richText = true;
+            DrawRunningIndicator();
             DrawNumberBadges();
 
             if (!_showOverlay)
@@ -160,6 +163,27 @@ namespace TfmCardRefresh
         // the item's world corners so it works regardless of pivot; Y is flipped for
         // IMGUI's top-left origin (screen-space-overlay canvas).
         private static readonly Vector3[] s_corners = new Vector3[4];
+
+        // Tiny always-on marker so you can tell at a glance the mod is active. One
+        // GUI.Label, no scene work, so it has no measurable FPS cost.
+        private void DrawRunningIndicator()
+        {
+            if (!On(FeatIndicator))
+            {
+                return;
+            }
+            if (s_indicatorStyle == null)
+            {
+                s_indicatorStyle = new GUIStyle
+                {
+                    fontSize = 13,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.LowerLeft,
+                };
+                s_indicatorStyle.normal.textColor = new Color(0.10f, 0.95f, 0.62f, 0.65f);
+            }
+            GUI.Label(new Rect(10f, Screen.height - 26f, 340f, 20f), "TFM mod v" + PluginVersion + " active", s_indicatorStyle);
+        }
 
         private void DrawNumberBadges()
         {

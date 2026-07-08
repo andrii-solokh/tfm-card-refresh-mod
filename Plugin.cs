@@ -669,16 +669,17 @@ namespace TfmCardRefresh
                 CanvasGroup button = Traverse.Create(tray).Field(field).GetValue<CanvasGroup>();
                 if (button == null || !button.interactable)
                 {
+                    return; // not enough resources, or conversion unavailable right now
+                }
+                // Submit the conversion directly, like the tray handler does, but skip
+                // its 1-second cosmetic lock (WaitForSeconds(1f)) so conversions chain.
+                TM_GameInfo info = game.GameInfo;
+                TM_Player me = info.GetMyPlayer();
+                if (me == null || !info.CurrentPlayer.IsMe() || me.NbActionsLeft <= 0)
+                {
                     return;
                 }
-                if (resourceType == EResourceType.Plant)
-                {
-                    tray.OnPlantConversion();
-                }
-                else
-                {
-                    tray.OnHeatConversion();
-                }
+                info.CurrentPlayer.HandleSelectActionSelection(EActionType.Conversion, resourceType);
             }
             catch (System.Exception)
             {
@@ -992,8 +993,10 @@ namespace TfmCardRefresh
             CardButton(card)?.onClick.Invoke();
         }
 
-        // True if the item's centre is within the visible screen (cards scrolled to
-        // another page sit off to the side and must not be numbered).
+        // True only if the WHOLE item is on screen. Cards on adjacent pages peek in
+        // from the sides (behind the paging arrows); their centre can be on-screen, so
+        // a centre test wrongly numbers them. Requiring both edges in bounds keeps the
+        // numbering to the cards fully visible on the current page.
         private static bool IsOnScreen(Transform tr)
         {
             RectTransform rt = tr as RectTransform;
@@ -1002,9 +1005,12 @@ namespace TfmCardRefresh
                 return false;
             }
             rt.GetWorldCorners(s_corners);
-            float cx = (s_corners[0].x + s_corners[2].x) * 0.5f;
-            float cy = (s_corners[0].y + s_corners[2].y) * 0.5f;
-            return cx >= 0f && cx <= Screen.width && cy >= 0f && cy <= Screen.height;
+            const float m = 8f; // tolerance for cards clipped slightly by the panel frame
+            float left = s_corners[0].x;
+            float right = s_corners[2].x;
+            float bottom = s_corners[0].y;
+            float top = s_corners[1].y;
+            return left >= -m && right <= Screen.width + m && bottom >= -m && top <= Screen.height + m;
         }
 
         // Order UI items top row first, then left to right (screen coords).

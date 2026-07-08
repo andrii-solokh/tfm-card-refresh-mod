@@ -950,31 +950,18 @@ namespace TfmCardRefresh
                 // Buy/keep selection (CardSelectionPage, "BUY UP TO N CARDS"): number
                 // toggles that card's selection. Enumerate the page's own card list.
                 CardSelectionPage selPage = Object.FindFirstObjectByType<CardSelectionPage>();
-                if (selPage != null)
+                if (selPage != null && AddSelectableCardPreviews(selPage, "m_AllCardPreviews"))
                 {
-                    System.Collections.IEnumerable selObjs =
-                        Traverse.Create(selPage).Field("m_AllCardPreviews").GetValue() as System.Collections.IEnumerable;
-                    List<CardPreview> selCards = new List<CardPreview>();
-                    if (selObjs != null)
-                    {
-                        foreach (object o in selObjs)
-                        {
-                            if (o is CardPreview cp && cp.isActiveAndEnabled && IsOnScreen(cp.transform))
-                            {
-                                selCards.Add(cp);
-                            }
-                        }
-                    }
-                    SortByScreenPosition(selCards);
-                    foreach (CardPreview c in selCards)
-                    {
-                        CardPreview card = c;
-                        _targets.Add((card.transform, () => card.OnSelectCard()));
-                    }
-                    if (_targets.Count > 0)
-                    {
-                        return;
-                    }
+                    return;
+                }
+
+                // Sell / discard patents (SellPatentPopupPage, "SELECT CARD TO
+                // DISCARD" / "SELL PATENTS"): number toggles that card's selection,
+                // then the page's confirm button (Space) commits.
+                SellPatentPopupPage sellPage = Object.FindFirstObjectByType<SellPatentPopupPage>();
+                if (sellPage != null && AddSelectableCardPreviews(sellPage, "m_AllCardPreviews"))
+                {
+                    return;
                 }
 
                 // Hand browse grid (ViewPlayerCardsPage): number opens the card (or
@@ -1038,6 +1025,34 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
             }
+        }
+
+        // Number every on-screen CardPreview in a page's private card list, where a
+        // number activates that card's select toggle. Shared by the buy/keep page and
+        // the sell/discard page, which both expose a List<CardPreview> field of the
+        // same shape. Returns true if it numbered at least one card.
+        private bool AddSelectableCardPreviews(object page, string listField)
+        {
+            System.Collections.IEnumerable objs =
+                Traverse.Create(page).Field(listField).GetValue() as System.Collections.IEnumerable;
+            List<CardPreview> cards = new List<CardPreview>();
+            if (objs != null)
+            {
+                foreach (object o in objs)
+                {
+                    if (o is CardPreview cp && cp.isActiveAndEnabled && IsOnScreen(cp.transform))
+                    {
+                        cards.Add(cp);
+                    }
+                }
+            }
+            SortByScreenPosition(cards);
+            foreach (CardPreview c in cards)
+            {
+                CardPreview card = c;
+                _targets.Add((card.transform, () => card.OnSelectCard()));
+            }
+            return _targets.Count > 0;
         }
 
         // The card's own Select/Use/Buy button, only if it is currently clickable.

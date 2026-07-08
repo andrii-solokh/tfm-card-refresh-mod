@@ -42,6 +42,10 @@ namespace TfmCardRefresh
 
         private float _elapsed;
         private float _targetsElapsed;
+        private KeyCode _repeatKey = KeyCode.None;
+        private float _repeatTimer;
+        private const float RepeatInitialDelay = 0.35f;
+        private const float RepeatInterval = 0.06f;
         private int _lastPlayer = int.MinValue;
         private int _lastEvents = int.MinValue;
         private bool _prevIsMyTurn;
@@ -322,6 +326,33 @@ namespace TfmCardRefresh
             }
         }
 
+        // True on the initial press, then repeatedly while held (after a short delay).
+        // Lets you hold an arrow to ramp an amount instead of tapping many times.
+        private bool KeyDownOrRepeat(KeyCode key)
+        {
+            if (Input.GetKeyDown(key))
+            {
+                _repeatKey = key;
+                _repeatTimer = RepeatInitialDelay;
+                return true;
+            }
+            if (_repeatKey == key)
+            {
+                if (!Input.GetKey(key))
+                {
+                    _repeatKey = KeyCode.None;
+                    return false;
+                }
+                _repeatTimer -= Time.unscaledDeltaTime;
+                if (_repeatTimer <= 0f)
+                {
+                    _repeatTimer = RepeatInterval;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private void HandleHotkeys()
         {
             // Overlay toggle works regardless of the master switch or text focus.
@@ -334,22 +365,23 @@ namespace TfmCardRefresh
             {
                 return;
             }
-            if (Input.GetKeyDown(Key(KeyNavUp, KeyCode.UpArrow)))
+            // Arrows repeat while held (hold to ramp an amount up/down quickly).
+            if (KeyDownOrRepeat(Key(KeyNavUp, KeyCode.UpArrow)))
             {
                 NavigateChoice(down: false);
                 return;
             }
-            if (Input.GetKeyDown(Key(KeyNavDown, KeyCode.DownArrow)))
+            if (KeyDownOrRepeat(Key(KeyNavDown, KeyCode.DownArrow)))
             {
                 NavigateChoice(down: true);
                 return;
             }
-            if (Input.GetKeyDown(Key(KeyNavLeft, KeyCode.LeftArrow)))
+            if (KeyDownOrRepeat(Key(KeyNavLeft, KeyCode.LeftArrow)))
             {
                 NavigateHorizontal(right: false);
                 return;
             }
-            if (Input.GetKeyDown(Key(KeyNavRight, KeyCode.RightArrow)))
+            if (KeyDownOrRepeat(Key(KeyNavRight, KeyCode.RightArrow)))
             {
                 NavigateHorizontal(right: true);
                 return;
@@ -496,11 +528,15 @@ namespace TfmCardRefresh
                     return;
                 }
                 TM_Game game = Singleton<GameManager>.Instance.Game;
-                HUD_PlayerTray tray = (game != null && game.HUD != null) ? game.HUD.PlayerTray : null;
-                if (tray != null)
+                if (game == null || game.GameInfo == null)
                 {
-                    tray.ShowPopup(EPage.CardActionsPopup);
+                    return;
                 }
+                // Open MY actions explicitly. ShowPopup binds to whichever player the
+                // HUD is currently showing, which after viewing an opponent would open
+                // the opponent's actions.
+                int myId = game.GameInfo.GetMyPlayerLocalId();
+                UIManager.Instance.Push(EPage.CardActionsPopup, keepPreviousPagesVisible: true, IntValuePageParameters.Create(myId));
             }
             catch (System.Exception)
             {

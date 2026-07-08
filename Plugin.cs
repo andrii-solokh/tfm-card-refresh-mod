@@ -209,6 +209,11 @@ namespace TfmCardRefresh
                 Convert(EResourceType.Heat);
                 return;
             }
+            if (Input.GetKeyDown(KeyCode.S))
+            {
+                SellFromHand();
+                return;
+            }
             if (Input.GetKeyDown(KeyCode.B))
             {
                 ToggleBoardView();
@@ -398,6 +403,36 @@ namespace TfmCardRefresh
                 else
                 {
                     tray.OnHeatConversion();
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Sell cards from hand: open the game's Sell Patents UI (your hand, pick
+        // cards, Sell). Same call the Standard Projects > Sell Patents button makes,
+        // so it only works during your action turn. Space then confirms the sale.
+        private void SellFromHand()
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_Player current = game?.GameInfo?.CurrentPlayer;
+                if (current == null
+                    || current.NbActionsLeft <= 0
+                    || game.GameFlow.CurrentPhase != EPhase.Action
+                    || UIManager.Instance.IsPageInStack(EPage.SellPatentPopupPage))
+                {
+                    return;
+                }
+                if (current.TryGetAgentAsHuman(out TM_HumanAgent human))
+                {
+                    human.HandleSelectStandardProjectSelection(EStandardProject.SellPatents, 0);
                 }
             }
             catch (System.Exception)
@@ -625,6 +660,19 @@ namespace TfmCardRefresh
                 if (stealPage != null)
                 {
                     stealPage.Confirm();
+                    return;
+                }
+
+                // Sell Patents popup: Space presses Sell when at least the minimum
+                // number of cards is selected (SellButton is interactable).
+                SellPatentPopupPage sellPage = Object.FindFirstObjectByType<SellPatentPopupPage>();
+                if (sellPage != null)
+                {
+                    Button sellButton = Traverse.Create(sellPage).Field("SellButton").GetValue<Button>();
+                    if (sellButton != null && sellButton.interactable && sellButton.gameObject.activeInHierarchy)
+                    {
+                        sellButton.onClick.Invoke();
+                    }
                     return;
                 }
 

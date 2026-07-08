@@ -81,6 +81,7 @@ while you're actively typing in chat):
 | E | Effects |
 | G | Convert plants → greenery |
 | T | Convert heat → temperature |
+| S | Sell cards (opens Sell Patents; Space confirms) |
 | B | View state (inspect board) / Return |
 | 1–4 | Focus a player's board (1 = you, then the others) |
 

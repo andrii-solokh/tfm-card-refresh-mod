@@ -80,6 +80,9 @@ off-turn; suppressed only while you're actively typing in chat):
 | R | Resources |
 | V | Victory points |
 | E | Effects |
+| M | Milestones tab |
+| K | Standard Projects tab |
+| W | Awards tab |
 | G | Convert plants → greenery |
 | T | Convert heat → temperature |
 | S | Sell cards (opens Sell Patents; Space confirms) |
@@ -91,6 +94,10 @@ off-turn; suppressed only while you're actively typing in chat):
 
 Conversions (`G`/`T`) only fire when you can actually convert (enough resources,
 your turn). Tags no longer has a key (`T` is now temperature).
+
+Hold **Cmd/Ctrl** to reveal the keys on screen: number badges appear on the
+selectable cards/actions, and the Milestones / Standard Projects / Awards tabs
+show their letter. Release the modifier and press the bare key to use it.
 
 ## Config (toggle features / rebind keys)
 

@@ -57,7 +57,8 @@ namespace TfmCardRefresh
         // ---- Config: rebindable keys (edit BepInEx/config/<guid>.cfg) ----
         internal static ConfigEntry<KeyCode> KeyProjects, KeyActions, KeyResources, KeyVictoryPoints,
             KeyEffects, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm,
-            KeyNavUp, KeyNavDown, KeyNavLeft, KeyNavRight, KeyOverlay;
+            KeyNavUp, KeyNavDown, KeyNavLeft, KeyNavRight, KeyOverlay,
+            KeyMilestones, KeyStandardProjects, KeyAwards;
 
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
@@ -91,6 +92,9 @@ namespace TfmCardRefresh
             KeyNavLeft = Config.Bind("Keys", "NavigateLeft", KeyCode.LeftArrow, "Previous card page / left in a choice list");
             KeyNavRight = Config.Bind("Keys", "NavigateRight", KeyCode.RightArrow, "Next card page / right in a choice list");
             KeyOverlay = Config.Bind("Keys", "Overlay", KeyCode.H, "Toggle the on-screen hotkey overlay");
+            KeyMilestones = Config.Bind("Keys", "Milestones", KeyCode.M, "Open/close the Milestones tab");
+            KeyStandardProjects = Config.Bind("Keys", "StandardProjects", KeyCode.K, "Open/close the Standard Projects tab");
+            KeyAwards = Config.Bind("Keys", "Awards", KeyCode.W, "Open/close the Awards tab");
 
             FeatHotkeys = Config.Bind("Features", "Hotkeys", true, "Master switch for all keyboard shortcuts");
             FeatCardRefresh = Config.Bind("Features", "CardRefresh", true, "Re-check card playability when game state changes");
@@ -123,12 +127,14 @@ namespace TfmCardRefresh
 
         private static GUIStyle s_numberStyle;
         private static GUIStyle s_indicatorStyle;
+        private static GUIStyle s_keyHintStyle;
 
         private void OnGUI()
         {
             GUI.skin.label.richText = true;
             DrawRunningIndicator();
             DrawNumberBadges();
+            DrawKeyHints();
 
             if (!_showOverlay)
             {
@@ -141,11 +147,14 @@ namespace TfmCardRefresh
                 (KeyResources, KeyCode.R, "Resources"),
                 (KeyVictoryPoints, KeyCode.V, "Victory points"),
                 (KeyEffects, KeyCode.E, "Effects"),
+                (KeyMilestones, KeyCode.M, "Milestones"),
+                (KeyStandardProjects, KeyCode.K, "Standard projects"),
+                (KeyAwards, KeyCode.W, "Awards"),
                 (KeyGreenery, KeyCode.G, "Plants → greenery"),
                 (KeyTemperature, KeyCode.T, "Heat → temperature"),
                 (KeySell, KeyCode.S, "Sell cards"),
                 (KeyBoard, KeyCode.B, "View state / board"),
-                (KeyConfirm, KeyCode.Space, "Confirm"),
+                (KeyConfirm, KeyCode.Space, "Confirm / pass"),
                 (KeyNavUp, KeyCode.UpArrow, "Navigate up"),
                 (KeyNavDown, KeyCode.DownArrow, "Navigate down"),
             };
@@ -225,6 +234,44 @@ namespace TfmCardRefresh
             }
         }
 
+        // Draw the key letter centred over each hinted button while Cmd/Ctrl is held,
+        // so the panel shortcuts (Milestones / Standard Projects / Awards) are
+        // discoverable without memorising them.
+        private void DrawKeyHints()
+        {
+            if (_keyHints.Count == 0 || !ModifierHeld())
+            {
+                return;
+            }
+            if (s_keyHintStyle == null)
+            {
+                s_keyHintStyle = new GUIStyle
+                {
+                    fontSize = 22,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter,
+                };
+                s_keyHintStyle.normal.textColor = new Color(0.05f, 0.95f, 0.58f, 1f); // brand mint
+            }
+            foreach ((Transform t, string label) in _keyHints)
+            {
+                RectTransform rt = t as RectTransform;
+                if (rt == null)
+                {
+                    continue;
+                }
+                rt.GetWorldCorners(s_corners);
+                float centerX = (s_corners[0].x + s_corners[2].x) * 0.5f;
+                float centerY = (s_corners[0].y + s_corners[1].y) * 0.5f;
+                Rect rect = new Rect(centerX - 40f, (Screen.height - centerY) - 16f, 80f, 32f);
+                Color prev = GUI.color;
+                GUI.color = Color.black;
+                GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), label, s_keyHintStyle);
+                GUI.color = prev;
+                GUI.Label(rect, label, s_keyHintStyle);
+            }
+        }
+
         private void Update()
         {
             // Only scan for numbered items while Cmd/Ctrl is held (the only time the
@@ -241,6 +288,7 @@ namespace TfmCardRefresh
                     _targetsElapsed = 0f;
                     _lastBadgePage = top;
                     RefreshNumberedTargets();
+                    RefreshKeyHints();
                 }
                 _modifierWasHeld = true;
             }
@@ -250,6 +298,10 @@ namespace TfmCardRefresh
                 if (_targets.Count > 0)
                 {
                     _targets.Clear();
+                }
+                if (_keyHints.Count > 0)
+                {
+                    _keyHints.Clear();
                 }
             }
             HandleSpaceToConfirm();
@@ -493,6 +545,54 @@ namespace TfmCardRefresh
             {
                 TryTogglePopup(EPage.CardEffectsPopup);
                 return;
+            }
+            if (Input.GetKeyDown(Key(KeyMilestones, KeyCode.M)))
+            {
+                ToggleActionTab(EActionType.Milestone);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyStandardProjects, KeyCode.K)))
+            {
+                ToggleActionTab(EActionType.StandardProject);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyAwards, KeyCode.W)))
+            {
+                ToggleActionTab(EActionType.Award);
+                return;
+            }
+        }
+
+        // Open (or switch to) one of the top tabs shown as MILESTONES / STANDARD
+        // PROJECTS / AWARDS; press the same key again to close it. Uses the game's own
+        // top-button handler so the tab animation and selected state stay correct.
+        private void ToggleActionTab(EActionType action)
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                HUD_TopActionButtons tabs = (game != null && game.HUD != null) ? game.HUD.TopActionButtons : null;
+                if (tabs == null)
+                {
+                    return;
+                }
+                if (UIManager.Instance.IsPageInStack(EPage.ActionPopup))
+                {
+                    ActionPopup popup = UIManager.Instance.GetPage<ActionPopup>(EPage.ActionPopup);
+                    if (popup != null && popup.GetActionType() == action)
+                    {
+                        popup.OnCloseButtonClick(); // same tab already open -> close it
+                        return;
+                    }
+                }
+                tabs.OnClick(action); // open, or switch to this tab
+            }
+            catch (System.Exception)
+            {
             }
         }
 
@@ -899,6 +999,10 @@ namespace TfmCardRefresh
         // activate them; OnGUI draws a number over each.
         private readonly List<(Transform t, System.Action act)> _targets = new List<(Transform, System.Action)>();
 
+        // Key-letter hints drawn over on-screen buttons while Cmd/Ctrl is held, so the
+        // panel keys are discoverable. Refreshed on the same cadence as _targets.
+        private readonly List<(Transform t, string label)> _keyHints = new List<(Transform, string)>();
+
         private static bool ModifierHeld()
         {
             return Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand)
@@ -946,6 +1050,48 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
                 return false;
+            }
+        }
+
+        // Collect the on-screen buttons whose key we can show as a hint. Currently
+        // the three top tabs (Milestones / Standard Projects / Awards); each button
+        // reports its own EActionType, which maps to the configured key.
+        private void RefreshKeyHints()
+        {
+            _keyHints.Clear();
+            try
+            {
+                foreach (HUD_TopActionButton button in
+                    Object.FindObjectsByType<HUD_TopActionButton>(FindObjectsSortMode.None))
+                {
+                    if (button == null || !button.isActiveAndEnabled)
+                    {
+                        continue;
+                    }
+                    string label = KeyForActionType(button.GetActionType());
+                    if (label != null && IsCentreOnScreen(button.transform))
+                    {
+                        _keyHints.Add((button.transform, label));
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        private static string KeyForActionType(EActionType action)
+        {
+            switch (action)
+            {
+                case EActionType.Milestone:
+                    return Key(KeyMilestones, KeyCode.M).ToString();
+                case EActionType.StandardProject:
+                    return Key(KeyStandardProjects, KeyCode.K).ToString();
+                case EActionType.Award:
+                    return Key(KeyAwards, KeyCode.W).ToString();
+                default:
+                    return null;
             }
         }
 

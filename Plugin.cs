@@ -149,12 +149,15 @@ namespace TfmCardRefresh
             GUILayout.EndArea();
         }
 
-        // Draw a yellow number over each current clickable item (SELECT ONE choices
-        // or actions). Assumes a screen-space-overlay canvas (item.position is in
-        // screen pixels); Y is flipped for IMGUI's top-left origin.
+        // Draw a big white number at the LEFT edge of each current clickable item,
+        // but only while Cmd/Ctrl is held (the key that also activates them). Uses
+        // the item's world corners so it works regardless of pivot; Y is flipped for
+        // IMGUI's top-left origin (screen-space-overlay canvas).
+        private static readonly Vector3[] s_corners = new Vector3[4];
+
         private void DrawNumberBadges()
         {
-            if (_targets.Count == 0)
+            if (_targets.Count == 0 || !ModifierHeld())
             {
                 return;
             }
@@ -162,26 +165,30 @@ namespace TfmCardRefresh
             {
                 s_numberStyle = new GUIStyle
                 {
-                    fontSize = 22,
+                    fontSize = 34,
                     fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleCenter,
+                    alignment = TextAnchor.MiddleLeft,
                 };
+                s_numberStyle.normal.textColor = Color.white;
             }
             for (int i = 0; i < _targets.Count && i < 9; i++)
             {
-                Transform tr = _targets[i].t;
-                if (tr == null)
+                RectTransform rt = _targets[i].t as RectTransform;
+                if (rt == null)
                 {
                     continue;
                 }
-                Vector3 p = tr.position;
-                Rect rect = new Rect(p.x - 16f, (Screen.height - p.y) - 16f, 32f, 32f);
+                rt.GetWorldCorners(s_corners); // 0=BL 1=TL 2=TR 3=BR, screen px for overlay
+                float leftX = s_corners[0].x + 8f;
+                float centerY = (s_corners[0].y + s_corners[1].y) * 0.5f;
+                Rect rect = new Rect(leftX, (Screen.height - centerY) - 22f, 44f, 44f);
                 string text = (i + 1).ToString();
+                Color prev = GUI.color;
                 GUI.color = Color.black;
-                GUI.Label(new Rect(rect.x + 1f, rect.y + 1f, rect.width, rect.height), text, s_numberStyle);
-                GUI.color = Color.yellow;
-                GUI.Label(rect, text, s_numberStyle);
+                GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), text, s_numberStyle);
                 GUI.color = Color.white;
+                GUI.Label(rect, text, s_numberStyle);
+                GUI.color = prev;
             }
         }
 
@@ -362,14 +369,14 @@ namespace TfmCardRefresh
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
                 {
-                    // Bare number = pick the numbered card/action; Cmd/Ctrl+number = focus player.
-                    if (PlayerFocusModifierHeld())
+                    // Bare number = focus player; Cmd/Ctrl+number = use the numbered card/action.
+                    if (ModifierHeld())
                     {
-                        FocusPlayer(n);
+                        ActivateNumberedTarget(n);
                     }
                     else
                     {
-                        ActivateNumberedTarget(n);
+                        FocusPlayer(n);
                     }
                     return;
                 }
@@ -743,7 +750,7 @@ namespace TfmCardRefresh
         // activate them; OnGUI draws a number over each.
         private readonly List<(Transform t, System.Action act)> _targets = new List<(Transform, System.Action)>();
 
-        private static bool PlayerFocusModifierHeld()
+        private static bool ModifierHeld()
         {
             return Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand)
                 || Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
@@ -771,6 +778,27 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // "Select any production/resource" popup: each player entry.
+                StealResourcePage steal = Object.FindFirstObjectByType<StealResourcePage>();
+                if (steal != null)
+                {
+                    System.Collections.IEnumerable els =
+                        Traverse.Create(steal).Field("playerResourceElements").GetValue() as System.Collections.IEnumerable;
+                    if (els != null)
+                    {
+                        foreach (object o in els)
+                        {
+                            PlayerResourceElement pre = o as PlayerResourceElement;
+                            if (pre != null)
+                            {
+                                PlayerResourceElement e = pre;
+                                _targets.Add((e.transform, () => e.OnClick()));
+                            }
+                        }
+                    }
+                    return;
+                }
+
                 CardActionsPopup actionsPopup = Object.FindFirstObjectByType<CardActionsPopup>();
                 if (actionsPopup != null)
                 {
@@ -779,6 +807,36 @@ namespace TfmCardRefresh
                         CardActionElement el = element;
                         _targets.Add((el.transform, () => el.OnActionButtonTriggered()));
                     }
+                    return;
+                }
+
+                // Card selection menus (hand carousel, discard/buy selection): each
+                // big card, left-to-right. Number presses its own Use/Select button.
+                BigCardPreview[] cards = Object.FindObjectsByType<BigCardPreview>(FindObjectsSortMode.None);
+                if (cards.Length > 0)
+                {
+                    List<BigCardPreview> sorted = new List<BigCardPreview>(cards);
+                    sorted.Sort((a, b) => a.transform.position.x.CompareTo(b.transform.position.x));
+                    foreach (BigCardPreview c in sorted)
+                    {
+                        BigCardPreview card = c;
+                        _targets.Add((card.transform, () => PressCardButton(card)));
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        private static void PressCardButton(BigCardPreview card)
+        {
+            try
+            {
+                Button btn = Traverse.Create(card).Field("m_Btn").GetValue<Button>();
+                if (btn != null && btn.interactable && btn.gameObject.activeInHierarchy)
+                {
+                    btn.onClick.Invoke();
                 }
             }
             catch (System.Exception)
@@ -857,6 +915,7 @@ namespace TfmCardRefresh
                 CardActionChoiceController controller = FindActiveChoiceController();
                 if (controller == null)
                 {
+                    NavigateStealResource(down);
                     return;
                 }
                 Traverse t = Traverse.Create(controller);
@@ -885,6 +944,55 @@ namespace TfmCardRefresh
                         : System.Math.Max(position - 1, 0);
                 }
                 t.Method("OnChoiceClicked", indices[newPosition]).GetValue();
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Up/Down through the "Select any production/resource" entries.
+        private void NavigateStealResource(bool down)
+        {
+            try
+            {
+                StealResourcePage steal = Object.FindFirstObjectByType<StealResourcePage>();
+                if (steal == null)
+                {
+                    return;
+                }
+                Traverse st = Traverse.Create(steal);
+                System.Collections.IEnumerable els =
+                    st.Field("playerResourceElements").GetValue() as System.Collections.IEnumerable;
+                if (els == null)
+                {
+                    return;
+                }
+                List<PlayerResourceElement> list = new List<PlayerResourceElement>();
+                foreach (object o in els)
+                {
+                    if (o is PlayerResourceElement pre)
+                    {
+                        list.Add(pre);
+                    }
+                }
+                if (list.Count == 0)
+                {
+                    return;
+                }
+                int selectedId = st.Field("m_SelectedPlayerID").GetValue<int>();
+                int position = list.FindIndex(e => e.PlayerID == selectedId);
+                int newPosition;
+                if (position < 0)
+                {
+                    newPosition = down ? 0 : list.Count - 1;
+                }
+                else
+                {
+                    newPosition = down
+                        ? System.Math.Min(position + 1, list.Count - 1)
+                        : System.Math.Max(position - 1, 0);
+                }
+                list[newPosition].OnClick();
             }
             catch (System.Exception)
             {

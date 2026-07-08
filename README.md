@@ -1,4 +1,4 @@
-# Terraforming Mars QoL mod (macOS + Windows)
+# Terraforming Mars: skip the turn animations (macOS + Windows)
 
 A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds quality-of-life
 fixes and keyboard shortcuts to the Asmodee **Terraforming Mars** digital client

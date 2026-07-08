@@ -42,6 +42,8 @@ namespace TfmCardRefresh
 
         private float _elapsed;
         private float _targetsElapsed;
+        private bool _modifierWasHeld;
+        private EPage _lastBadgePage = (EPage)(-1);
         private KeyCode _repeatKey = KeyCode.None;
         private float _repeatTimer;
         private const float RepeatInitialDelay = 0.35f;
@@ -227,19 +229,24 @@ namespace TfmCardRefresh
         {
             // Only scan for numbered items while Cmd/Ctrl is held (the only time the
             // badges show and number-select is used). FindObjectsByType scans the
-            // whole scene, so running it every frame lagged the game.
+            // whole scene, so the badge layout is scanned only when it can have
+            // changed: the first held frame, a top-page change, or a slow safety
+            // re-scan. Scanning every frame lagged the game.
             if (ModifierHeld())
             {
                 _targetsElapsed += Time.unscaledDeltaTime;
-                if (_targetsElapsed >= 0.1f)
+                EPage top = TopPage();
+                if (!_modifierWasHeld || top != _lastBadgePage || _targetsElapsed >= 0.5f)
                 {
                     _targetsElapsed = 0f;
+                    _lastBadgePage = top;
                     RefreshNumberedTargets();
                 }
+                _modifierWasHeld = true;
             }
             else
             {
-                _targetsElapsed = 0.1f; // next modifier press refreshes immediately
+                _modifierWasHeld = false;
                 if (_targets.Count > 0)
                 {
                     _targets.Clear();
@@ -750,6 +757,10 @@ namespace TfmCardRefresh
                 {
                     PlayerAction sellAction = board.PlayerActionBank.GetStandardProjectPlayerAction(EStandardProject.SellPatents);
                     Traverse.Create(human).Field("m_SellPatentAction").SetValue(sellAction);
+                    // Selling is not a blue-card action, so the panel to reopen after
+                    // it is your hand, not the actions popup. Clear the flag or the
+                    // SelectAction re-prompt would reopen actions over the cards.
+                    LastPlayWasAction = false;
                     PendingSellCardId = cardId;
                     try
                     {
@@ -892,6 +903,20 @@ namespace TfmCardRefresh
                 || Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
         }
 
+        // The top page of the UI stack, used as a cheap change signal for the badge
+        // scan (a full re-scan is only needed when this changes).
+        private static EPage TopPage()
+        {
+            try
+            {
+                return UIManager.Instance.GetLastPageInStack();
+            }
+            catch (System.Exception)
+            {
+                return (EPage)(-1);
+            }
+        }
+
         private void RefreshNumberedTargets()
         {
             _targets.Clear();
@@ -997,11 +1022,17 @@ namespace TfmCardRefresh
                     }
                 }
 
-                // Any card with an active, interactable Select/Use/Buy button: the
-                // hand carousel, buy/discard/keep selection, etc. Ordered top row
-                // first, then left to right. Number presses that card's own button.
+                // Card carousel (ExpandPlayerCardsPage): number any card that has an
+                // active Use/Buy button. Scope the search to the carousel's own
+                // children so this never scans the whole scene (the other selectable
+                // contexts all have their own branch above).
+                ExpandPlayerCardsPage carousel = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+                if (carousel == null)
+                {
+                    return;
+                }
                 List<BaseCardPreview> cards = new List<BaseCardPreview>();
-                foreach (BaseCardPreview pv in Object.FindObjectsByType<BaseCardPreview>(FindObjectsSortMode.None))
+                foreach (BaseCardPreview pv in carousel.GetComponentsInChildren<BaseCardPreview>())
                 {
                     if (CardButton(pv) != null && IsOnScreen(pv.transform))
                     {

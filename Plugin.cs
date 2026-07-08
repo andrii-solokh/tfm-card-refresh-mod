@@ -1138,10 +1138,47 @@ namespace TfmCardRefresh
             }
         }
 
+        // Nudge the steel/titanium amount on an open card's DECREASE COST panel;
+        // returns true if such a panel is open (so arrows adjust payment instead of
+        // paging cards).
+        private static bool AdjustDecreaseCost(int delta)
+        {
+            try
+            {
+                CardCostDecreaseController ctrl = null;
+                foreach (CardCostDecreaseController c in
+                    Object.FindObjectsByType<CardCostDecreaseController>(FindObjectsSortMode.None))
+                {
+                    if (c != null && c.isActiveAndEnabled && c.ResourceConversionPanels != null)
+                    {
+                        ctrl = c;
+                        break;
+                    }
+                }
+                if (ctrl == null)
+                {
+                    return false;
+                }
+                foreach (ResourceConversionPanel panel in ctrl.ResourceConversionPanels)
+                {
+                    if (panel != null && panel.gameObject.activeInHierarchy
+                        && panel.MaxResourceAmount > panel.MinResourceAmount)
+                    {
+                        panel.SetResourceAmount(panel.CurrentAmount + delta);
+                        return true;
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return false;
+        }
+
         private void NavigateChoice(bool down)
         {
-            // Up = more, Down = less on the amount panel, if one is open.
-            if (AdjustConversion(down ? -1 : 1))
+            // Up = more, Down = less on any open amount / payment panel.
+            if (AdjustConversion(down ? -1 : 1) || AdjustDecreaseCost(down ? -1 : 1))
             {
                 return;
             }
@@ -1238,8 +1275,10 @@ namespace TfmCardRefresh
         // is open, fall back to moving the SELECT ONE choice highlight.
         private void NavigateHorizontal(bool right)
         {
-            // Right = more, Left = less on the amount panel, if one is open.
-            if (AdjustConversion(right ? 1 : -1))
+            // Right = more, Left = less on an open amount / card-payment panel. This
+            // takes priority over paging, so with a card open the arrows change the
+            // steel/titanium payment instead of flipping to another card.
+            if (AdjustConversion(right ? 1 : -1) || AdjustDecreaseCost(right ? 1 : -1))
             {
                 return;
             }

@@ -860,6 +860,36 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // Buy/keep selection (CardSelectionPage, "BUY UP TO N CARDS"): number
+                // toggles that card's selection. Enumerate the page's own card list.
+                CardSelectionPage selPage = Object.FindFirstObjectByType<CardSelectionPage>();
+                if (selPage != null)
+                {
+                    System.Collections.IEnumerable selObjs =
+                        Traverse.Create(selPage).Field("m_AllCardPreviews").GetValue() as System.Collections.IEnumerable;
+                    List<CardPreview> selCards = new List<CardPreview>();
+                    if (selObjs != null)
+                    {
+                        foreach (object o in selObjs)
+                        {
+                            if (o is CardPreview cp && cp.isActiveAndEnabled && IsOnScreen(cp.transform))
+                            {
+                                selCards.Add(cp);
+                            }
+                        }
+                    }
+                    SortByScreenPosition(selCards);
+                    foreach (CardPreview c in selCards)
+                    {
+                        CardPreview card = c;
+                        _targets.Add((card.transform, () => card.OnSelectCard()));
+                    }
+                    if (_targets.Count > 0)
+                    {
+                        return;
+                    }
+                }
+
                 // Hand browse grid (ViewPlayerCardsPage): number opens the card (or
                 // presses its Select button if it has one). Enumerate the page's own
                 // card list so board/tray cards are never numbered.
@@ -873,7 +903,7 @@ namespace TfmCardRefresh
                     {
                         foreach (object o in cardObjs)
                         {
-                            if (o is CardPreview cp && cp.isActiveAndEnabled)
+                            if (o is CardPreview cp && cp.isActiveAndEnabled && IsOnScreen(cp.transform))
                             {
                                 grid.Add(cp);
                             }
@@ -899,7 +929,7 @@ namespace TfmCardRefresh
                 List<BaseCardPreview> cards = new List<BaseCardPreview>();
                 foreach (BaseCardPreview pv in Object.FindObjectsByType<BaseCardPreview>(FindObjectsSortMode.None))
                 {
-                    if (CardButton(pv) != null)
+                    if (CardButton(pv) != null && IsOnScreen(pv.transform))
                     {
                         cards.Add(pv);
                     }
@@ -943,6 +973,21 @@ namespace TfmCardRefresh
         private static void PressCardButton(BaseCardPreview card)
         {
             CardButton(card)?.onClick.Invoke();
+        }
+
+        // True if the item's centre is within the visible screen (cards scrolled to
+        // another page sit off to the side and must not be numbered).
+        private static bool IsOnScreen(Transform tr)
+        {
+            RectTransform rt = tr as RectTransform;
+            if (rt == null)
+            {
+                return false;
+            }
+            rt.GetWorldCorners(s_corners);
+            float cx = (s_corners[0].x + s_corners[2].x) * 0.5f;
+            float cy = (s_corners[0].y + s_corners[2].y) * 0.5f;
+            return cx >= 0f && cx <= Screen.width && cy >= 0f && cy <= Screen.height;
         }
 
         // Order UI items top row first, then left to right (screen coords).

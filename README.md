@@ -1,18 +1,41 @@
-# Terraforming Mars — QoL mod (macOS)
+# Terraforming Mars QoL mod (macOS + Windows)
 
 A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds quality-of-life
 fixes and keyboard shortcuts to the Asmodee **Terraforming Mars** digital client
-on macOS.
+on macOS and Windows.
 
 Everything it does is **display / UI only**. The game is server-authoritative and
 re-validates every real action, so the mod cannot make an illegal move, reveal
-hidden information, or give any mechanical advantage — it only makes your own
+hidden information, or give any mechanical advantage; it only makes your own
 client honest and quicker to drive.
 
 > Personal project. Not affiliated with Asmodee / Lucky Hammers. Modifying an
 > online client is against the game's ToS and is used here at your own risk.
 
 ---
+
+## Install (easiest)
+
+You need the game installed through **Steam** first. Then:
+
+1. **Download the mod.** On this page click the green **Code** button, then
+   **Download ZIP** (or grab the ZIP from the Releases page).
+2. **Unzip it** (double-click the downloaded file).
+3. **Double-click the installer** for your computer, inside the unzipped folder:
+   - **macOS:** `Install (macOS).command`
+     (first time only: if it won't open, right-click it, choose **Open**, then
+     **Open** again).
+   - **Windows:** `Install (Windows).bat`
+4. **Play:**
+   - **macOS:** double-click `Launch TFM (modded).command` (with Steam open).
+   - **Windows:** just launch Terraforming Mars from Steam as usual.
+
+The installer finds your game automatically, downloads the loader, and installs
+the mod. That's it. To go back to the normal game on macOS, launch from Steam
+instead of the Launch file; on Windows, see [Uninstall](#uninstall).
+
+The manual steps below are only if you want to do it by hand or the installer
+can't find your game.
 
 ## Requirements
 
@@ -23,7 +46,9 @@ client honest and quicker to drive.
 - Only to **rebuild** the plugin: the [.NET SDK](https://dotnet.microsoft.com/download)
   (`dotnet`).
 
-## Install (macOS)
+## Manual install (macOS)
+
+The `Install (macOS).command` above just runs this for you.
 
 ```sh
 git clone <this-repo-url> tfm-card-refresh-mod
@@ -45,8 +70,9 @@ running):
 Launch **normally from Steam** (no launch option) any time you want the stock
 game — the mod files sit inert unless launched through `run_bepinex.sh`.
 
-## Install (Windows)
+## Manual install (Windows)
 
+The `Install (Windows).bat` above does all of this for you. To do it by hand:
 Windows needs none of the macOS injection workarounds (no Rosetta, no shell
 scripts). Stock BepInEx auto-injects when you launch the game normally.
 
@@ -191,10 +217,13 @@ crashing the game.
 
 | File | Purpose |
 |------|---------|
+| `Install (macOS).command` | Double-click installer (macOS) |
+| `Install (Windows).bat` | Double-click installer (Windows) |
+| `install-windows.ps1` | Windows installer logic (called by the `.bat`) |
+| `Launch TFM (modded).command` | Double-click launcher (macOS) |
+| `TfmCardRefresh.dll` | Prebuilt plugin |
+| `setup.sh` | macOS installer (the `.command` runs this) |
+| `run_bepinex.sh.working` | BepInEx launcher template with the macOS fixes |
+| `build.sh` | Rebuild + reinstall the plugin (macOS) |
 | `Plugin.cs` | Plugin source (all features + hotkeys) |
 | `TfmCardRefresh5.csproj` | Build project (references the local game + BepInEx DLLs) |
-| `TfmCardRefresh.dll` | Prebuilt plugin |
-| `setup.sh` | One-shot installer |
-| `build.sh` | Rebuild + reinstall the plugin |
-| `run_bepinex.sh.working` | BepInEx launcher with the macOS fixes |
-| `Launch TFM (modded).command` | Double-click launcher |

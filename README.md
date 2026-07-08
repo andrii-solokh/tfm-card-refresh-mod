@@ -83,10 +83,34 @@ while you're actively typing in chat):
 | T | Convert heat → temperature |
 | S | Sell cards (opens Sell Patents; Space confirms) |
 | B | View state (inspect board) / Return |
+| Space | Confirm the default button of the open dialog / focused card |
+| ↑ / ↓ | Navigate a choice list |
 | 1–4 | Focus a player's board (1 = you, then the others) |
+| H | Toggle the on-screen shortcut overlay |
 
 Conversions (`G`/`T`) only fire when you can actually convert (enough resources,
 your turn). Tags no longer has a key (`T` is now temperature).
+
+## Config (toggle features / rebind keys)
+
+Every feature and key is configurable. Launch the game once with the mod, then
+edit:
+
+```
+BepInEx/config/com.experiment.tfm.cardrefresh.cfg
+```
+
+- `[Keys]` — rebind any shortcut. Values are Unity `KeyCode` names (e.g. `P`,
+  `Space`, `UpArrow`, `Keypad1`). Change and relaunch.
+- `[Features]` — turn any feature `true`/`false`: `Hotkeys` (master switch),
+  `SuppressAnnouncements`, `KeepHandOpenOffTurn`, `AutoOpenHandAfterPlay`,
+  `DimUnplayableInHandView`, `ShowActionAvailabilityOffTurn`,
+  `SortUsableActionsFirst`, `HandReadableOffTurn`, `CardRefresh`.
+
+In-game, press **H** for a quick overlay of the current key bindings.
+
+For an in-game settings *window* (sliders/toggles you edit live), drop the
+**BepInEx.ConfigurationManager** plugin into `BepInEx/plugins/` and press F1.
 
 ## Rebuild after a game update
 

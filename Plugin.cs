@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Aube;
 using BepInEx;
+using BepInEx.Configuration;
 using HarmonyLib;
 using TFM.GameData;
 using UI;
@@ -44,10 +45,57 @@ namespace TfmCardRefresh
         private int _lastEvents = int.MinValue;
         private bool _prevIsMyTurn;
         private bool _reopenHandAfterPass;
+        private bool _showOverlay;
+
+        // ---- Config: rebindable keys (edit BepInEx/config/<guid>.cfg) ----
+        internal static ConfigEntry<KeyCode> KeyProjects, KeyActions, KeyResources, KeyVictoryPoints,
+            KeyEffects, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm, KeyNavUp, KeyNavDown, KeyOverlay;
+
+        // ---- Config: feature toggles ----
+        internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
+            FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys;
+
+        internal static bool On(ConfigEntry<bool> e)
+        {
+            return e == null || e.Value;
+        }
+
+        private static KeyCode Key(ConfigEntry<KeyCode> e, KeyCode fallback)
+        {
+            return e == null ? fallback : e.Value;
+        }
+
+        private void BindConfig()
+        {
+            KeyProjects = Config.Bind("Keys", "Projects", KeyCode.P, "Open/close your hand (projects)");
+            KeyActions = Config.Bind("Keys", "Actions", KeyCode.A, "Open the card Actions popup");
+            KeyResources = Config.Bind("Keys", "Resources", KeyCode.R, "Open the Card Resources popup");
+            KeyVictoryPoints = Config.Bind("Keys", "VictoryPoints", KeyCode.V, "Open the Victory Points popup");
+            KeyEffects = Config.Bind("Keys", "Effects", KeyCode.E, "Open the Effects popup");
+            KeyGreenery = Config.Bind("Keys", "ConvertGreenery", KeyCode.G, "Convert plants to a greenery");
+            KeyTemperature = Config.Bind("Keys", "ConvertTemperature", KeyCode.T, "Convert heat to raise temperature");
+            KeySell = Config.Bind("Keys", "Sell", KeyCode.S, "Sell cards (Sell Patents)");
+            KeyBoard = Config.Bind("Keys", "BoardView", KeyCode.B, "Toggle View state / Return (inspect board)");
+            KeyConfirm = Config.Bind("Keys", "Confirm", KeyCode.Space, "Confirm the default button of the open dialog/card");
+            KeyNavUp = Config.Bind("Keys", "NavigateUp", KeyCode.UpArrow, "Move selection up in a choice list");
+            KeyNavDown = Config.Bind("Keys", "NavigateDown", KeyCode.DownArrow, "Move selection down in a choice list");
+            KeyOverlay = Config.Bind("Keys", "Overlay", KeyCode.H, "Toggle the on-screen hotkey overlay");
+
+            FeatHotkeys = Config.Bind("Features", "Hotkeys", true, "Master switch for all keyboard shortcuts");
+            FeatCardRefresh = Config.Bind("Features", "CardRefresh", true, "Re-check card playability when game state changes");
+            FeatHandReadable = Config.Bind("Features", "HandReadableOffTurn", true, "Let you open your hand during opponents' turns");
+            FeatAutoOpenHand = Config.Bind("Features", "AutoOpenHandAfterPlay", true, "Reopen hand/actions after you play or pass");
+            FeatKeepHandOpen = Config.Bind("Features", "KeepHandOpenOffTurn", true, "Keep the hand open across passing (suppress auto-close)");
+            FeatSuppressAnnouncements = Config.Bind("Features", "SuppressAnnouncements", true, "Hide turn/phase announcement banners");
+            FeatPlayabilityDim = Config.Bind("Features", "DimUnplayableInHandView", true, "Dim requirement-locked cards in the off-turn hand view");
+            FeatActionAvailability = Config.Bind("Features", "ShowActionAvailabilityOffTurn", true, "Show which card actions are usable during opponents' turns");
+            FeatActionSort = Config.Bind("Features", "SortUsableActionsFirst", true, "Sort usable actions to the top of the actions popup");
+        }
 
         private void Awake()
         {
             Logger.LogInfo(PluginName + " " + PluginVersion + " loaded.");
+            BindConfig();
             try
             {
                 new Harmony(PluginGuid).PatchAll(typeof(TfmCardRefreshPlugin).Assembly);
@@ -57,6 +105,38 @@ namespace TfmCardRefresh
             {
                 Logger.LogWarning("Harmony patch failed (hand-readable feature disabled): " + e.Message);
             }
+        }
+
+        private void OnGUI()
+        {
+            if (!_showOverlay)
+            {
+                return;
+            }
+            (ConfigEntry<KeyCode> key, KeyCode fallback, string label)[] rows =
+            {
+                (KeyProjects, KeyCode.P, "Projects (hand)"),
+                (KeyActions, KeyCode.A, "Actions"),
+                (KeyResources, KeyCode.R, "Resources"),
+                (KeyVictoryPoints, KeyCode.V, "Victory points"),
+                (KeyEffects, KeyCode.E, "Effects"),
+                (KeyGreenery, KeyCode.G, "Plants → greenery"),
+                (KeyTemperature, KeyCode.T, "Heat → temperature"),
+                (KeySell, KeyCode.S, "Sell cards"),
+                (KeyBoard, KeyCode.B, "View state / board"),
+                (KeyConfirm, KeyCode.Space, "Confirm"),
+                (KeyNavUp, KeyCode.UpArrow, "Navigate up"),
+                (KeyNavDown, KeyCode.DownArrow, "Navigate down"),
+            };
+            float height = 52f + (rows.Length + 1) * 20f;
+            GUILayout.BeginArea(new Rect(12f, 12f, 320f, height), GUI.skin.box);
+            GUILayout.Label("<b>TFM mod — shortcuts</b>   (" + Key(KeyOverlay, KeyCode.H) + " to hide)");
+            foreach ((ConfigEntry<KeyCode> key, KeyCode fallback, string label) in rows)
+            {
+                GUILayout.Label("  " + Key(key, fallback).ToString().PadRight(11) + label);
+            }
+            GUILayout.Label("  " + "1-4".PadRight(11) + "Focus player (1 = you)");
+            GUILayout.EndArea();
         }
 
         private void Update()
@@ -114,6 +194,10 @@ namespace TfmCardRefresh
                 _lastPlayer = player;
                 _lastEvents = events;
 
+                if (!On(FeatCardRefresh))
+                {
+                    return;
+                }
                 page.UpdateBasedOnTutorialSelectableCards();
                 Logger.LogInfo("Refreshed open card previews (player=" + player + ", events=" + events + ").");
             }
@@ -166,55 +250,49 @@ namespace TfmCardRefresh
             }
         }
 
-        // Tray stat popups opened via the game's own toggle path. ShowPopup ignores
-        // the toggle button's disabled state, so these work during opponent turns.
-        // (Projects/hand and Board are handled separately: the hand is not a tray
-        // toggle, and Board is the "View state" inspection toggle.)
-        private static readonly (KeyCode key, EPage page)[] s_hotkeys =
-        {
-            (KeyCode.A, EPage.CardActionsPopup),      // actions
-            (KeyCode.R, EPage.CardResourcesPopup),    // resources
-            (KeyCode.V, EPage.CardVictoryPointsPopup),// victory points
-            (KeyCode.E, EPage.CardEffectsPopup),      // effects
-        };
-
         private void HandleHotkeys()
         {
-            if (IsTextInputFocused())
+            // Overlay toggle works regardless of the master switch or text focus.
+            if (Input.GetKeyDown(Key(KeyOverlay, KeyCode.H)))
+            {
+                _showOverlay = !_showOverlay;
+                return;
+            }
+            if (!On(FeatHotkeys) || IsTextInputFocused())
             {
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.UpArrow))
+            if (Input.GetKeyDown(Key(KeyNavUp, KeyCode.UpArrow)))
             {
                 NavigateChoice(down: false);
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.DownArrow))
+            if (Input.GetKeyDown(Key(KeyNavDown, KeyCode.DownArrow)))
             {
                 NavigateChoice(down: true);
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.P))
+            if (Input.GetKeyDown(Key(KeyProjects, KeyCode.P)))
             {
                 ToggleHand();
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.G))
+            if (Input.GetKeyDown(Key(KeyGreenery, KeyCode.G)))
             {
                 Convert(EResourceType.Plant);
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.T))
+            if (Input.GetKeyDown(Key(KeyTemperature, KeyCode.T)))
             {
                 Convert(EResourceType.Heat);
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.S))
+            if (Input.GetKeyDown(Key(KeySell, KeyCode.S)))
             {
                 SellFromHand();
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.B))
+            if (Input.GetKeyDown(Key(KeyBoard, KeyCode.B)))
             {
                 ToggleBoardView();
                 return;
@@ -227,13 +305,25 @@ namespace TfmCardRefresh
                     return;
                 }
             }
-            for (int i = 0; i < s_hotkeys.Length; i++)
+            if (Input.GetKeyDown(Key(KeyActions, KeyCode.A)))
             {
-                if (Input.GetKeyDown(s_hotkeys[i].key))
-                {
-                    TryTogglePopup(s_hotkeys[i].page);
-                    return;
-                }
+                TryTogglePopup(EPage.CardActionsPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyResources, KeyCode.R)))
+            {
+                TryTogglePopup(EPage.CardResourcesPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyVictoryPoints, KeyCode.V)))
+            {
+                TryTogglePopup(EPage.CardVictoryPointsPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyEffects, KeyCode.E)))
+            {
+                TryTogglePopup(EPage.CardEffectsPopup);
+                return;
             }
         }
 
@@ -358,7 +448,7 @@ namespace TfmCardRefresh
         // placement, etc.) are never suppressed.
         internal static bool ShouldSuppressHandClose(EPage page)
         {
-            if (page != EPage.ViewPlayerCardsPage || UserClosingHand)
+            if (page != EPage.ViewPlayerCardsPage || UserClosingHand || !On(FeatKeepHandOpen))
             {
                 return false;
             }
@@ -659,7 +749,7 @@ namespace TfmCardRefresh
 
         private void HandleSpaceToConfirm()
         {
-            if (!Input.GetKeyDown(KeyCode.Space) || IsTextInputFocused())
+            if (!On(FeatHotkeys) || !Input.GetKeyDown(Key(KeyConfirm, KeyCode.Space)) || IsTextInputFocused())
             {
                 return;
             }
@@ -784,7 +874,8 @@ namespace TfmCardRefresh
     {
         private static void Prefix(HUD_TogglePopupButton __instance, ref bool aActive)
         {
-            if (!aActive && __instance.GetPageType() == EPage.ViewPlayerCardsPage)
+            if (TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatHandReadable)
+                && !aActive && __instance.GetPageType() == EPage.ViewPlayerCardsPage)
             {
                 aActive = true;
             }
@@ -804,7 +895,8 @@ namespace TfmCardRefresh
         {
             try
             {
-                if (!Singleton<GameManager>.IsInstanced)
+                if (!TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatAutoOpenHand)
+                    || !Singleton<GameManager>.IsInstanced)
                 {
                     return;
                 }
@@ -854,6 +946,10 @@ namespace TfmCardRefresh
     {
         private static bool Prefix(System.Action aCallback)
         {
+            if (!TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatSuppressAnnouncements))
+            {
+                return true; // feature off: show the announcement normally
+            }
             aCallback?.Invoke();
             return false;
         }
@@ -872,7 +968,8 @@ namespace TfmCardRefresh
     {
         private static void Postfix(CardPreview __instance, ECardState aState)
         {
-            if (aState != ECardState.ViewOnly)
+            if (aState != ECardState.ViewOnly
+                || !TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatPlayabilityDim))
             {
                 return;
             }
@@ -930,9 +1027,10 @@ namespace TfmCardRefresh
         {
             try
             {
-                if (game == null || game.GetRequestedPlayerToPlay().PlayerID == aPlayerId)
+                if (!TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatActionAvailability)
+                    || game == null || game.GetRequestedPlayerToPlay().PlayerID == aPlayerId)
                 {
-                    return; // your turn: the game's own state is already correct
+                    return; // your turn (or feature off): the game's own state is already correct
                 }
                 BlueCardPlayerAction action =
                     Traverse.Create(__instance).Field("m_BlueCardPlayerAction").GetValue<BlueCardPlayerAction>();
@@ -955,6 +1053,10 @@ namespace TfmCardRefresh
         {
             try
             {
+                if (!TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatActionSort))
+                {
+                    return;
+                }
                 CardActionElement[] elements = popup.GetComponentsInChildren<CardActionElement>();
                 if (elements == null || elements.Length < 2)
                 {

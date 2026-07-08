@@ -463,10 +463,12 @@ namespace TfmCardRefresh
                 if (UIManager.Instance.IsPageInStack(EPage.ViewPlayerCardsPage))
                 {
                     UserClosingHand = true;
+                    UserClosedPanel = true;
                     UIManager.Instance.Pop(EPage.ViewPlayerCardsPage);
                     UserClosingHand = false;
                     return;
                 }
+                UserClosedPanel = false;
                 OpenHand();
             }
             catch (System.Exception)
@@ -545,8 +547,16 @@ namespace TfmCardRefresh
 
         // Reopen whichever panel you were last using: actions if your last play was a
         // card action, otherwise your projects/hand.
+        // Set true when you deliberately close the hand/actions, so we stop
+        // auto-reopening it. Cleared only when you open a panel yourself (P/A).
+        internal static bool UserClosedPanel;
+
         internal static void ReopenPreferredPanel()
         {
+            if (UserClosedPanel)
+            {
+                return; // you closed it on purpose; don't force it back open
+            }
             if (LastPlayWasAction)
             {
                 OpenActions();
@@ -1029,6 +1039,9 @@ namespace TfmCardRefresh
                 TM_Game game = Singleton<GameManager>.Instance.Game;
                 if (game != null && game.HUD != null && game.HUD.PlayerTray != null)
                 {
+                    // Toggling a popup closed counts as closing a panel (stop auto-reopen);
+                    // toggling one open clears that so it can auto-reopen again.
+                    UserClosedPanel = UIManager.Instance.IsPageInStack(page);
                     game.HUD.PlayerTray.ShowPopup(page);
                 }
             }
@@ -1674,14 +1687,14 @@ namespace TfmCardRefresh
     [HarmonyPatch(typeof(ViewPlayerCardsPage), nameof(ViewPlayerCardsPage.OnBackButtonClick))]
     internal static class ManualHandBackPatch
     {
-        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; }
+        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; TfmCardRefreshPlugin.UserClosedPanel = true; }
         private static void Postfix() { TfmCardRefreshPlugin.UserClosingHand = false; }
     }
 
     [HarmonyPatch(typeof(ViewPlayerCardsPage), nameof(ViewPlayerCardsPage.OnCloseButtonClick))]
     internal static class ManualHandCloseButtonPatch
     {
-        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; }
+        private static void Prefix() { TfmCardRefreshPlugin.UserClosingHand = true; TfmCardRefreshPlugin.UserClosedPanel = true; }
         private static void Postfix() { TfmCardRefreshPlugin.UserClosingHand = false; }
     }
 

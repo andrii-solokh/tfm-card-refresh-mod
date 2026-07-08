@@ -938,8 +938,58 @@ namespace TfmCardRefresh
 
         // Up/Down move the highlighted option in the SELECT ONE popup, driving the
         // controller's own OnChoiceClicked so its highlight + cost panel stay correct.
+        // The "spend X energy -> gain X MC" style amount panel (ResourceConversionController).
+        internal static ResourceConversionController FindActiveConversionController()
+        {
+            try
+            {
+                foreach (ResourceConversionController c in
+                    Object.FindObjectsByType<ResourceConversionController>(FindObjectsSortMode.None))
+                {
+                    if (c.isActiveAndEnabled)
+                    {
+                        return c;
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return null;
+        }
+
+        // Nudge the amount on the active conversion panel; returns true if one exists.
+        private static bool AdjustConversion(int delta)
+        {
+            try
+            {
+                ResourceConversionController ctrl = FindActiveConversionController();
+                if (ctrl == null)
+                {
+                    return false;
+                }
+                ResourceConversionPanel panel =
+                    Traverse.Create(ctrl).Field("resourceConversionPanel").GetValue<ResourceConversionPanel>();
+                if (panel == null)
+                {
+                    return false;
+                }
+                panel.SetResourceAmount(panel.CurrentAmount + delta);
+                return true;
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
         private void NavigateChoice(bool down)
         {
+            // Up = more, Down = less on the amount panel, if one is open.
+            if (AdjustConversion(down ? -1 : 1))
+            {
+                return;
+            }
             try
             {
                 CardActionChoiceController controller = FindActiveChoiceController();
@@ -1033,6 +1083,11 @@ namespace TfmCardRefresh
         // is open, fall back to moving the SELECT ONE choice highlight.
         private void NavigateHorizontal(bool right)
         {
+            // Right = more, Left = less on the amount panel, if one is open.
+            if (AdjustConversion(right ? 1 : -1))
+            {
+                return;
+            }
             try
             {
                 ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
@@ -1099,6 +1154,14 @@ namespace TfmCardRefresh
             }
             try
             {
+                // "Spend X energy" style amount panel: Space confirms the amount.
+                ResourceConversionController conversion = FindActiveConversionController();
+                if (conversion != null)
+                {
+                    conversion.OnConfirm();
+                    return;
+                }
+
                 // SELECT ONE action-choice popup: Space confirms the highlighted option.
                 CardActionChoiceController choicePanel = FindActiveChoiceController();
                 if (choicePanel != null)

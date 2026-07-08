@@ -1032,6 +1032,11 @@ namespace TfmCardRefresh
         // panel keys are discoverable. Refreshed on the same cadence as _targets.
         private readonly List<(Transform t, string label)> _keyHints = new List<(Transform, string)>();
 
+        // The three top tab buttons cached once (they live for the whole game), so the
+        // hint refresh doesn't scan the scene every time.
+        private readonly List<(HUD_TopActionButton btn, string label)> _tabButtons =
+            new List<(HUD_TopActionButton, string)>();
+
         private static bool ModifierHeld()
         {
             return Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand)
@@ -1049,6 +1054,20 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
                 return (EPage)(-1);
+            }
+        }
+
+        // Cheap check (a list lookup) for whether a page is open, used to skip the
+        // expensive whole-scene FindObjectsByType scans when that page isn't up.
+        private static bool PageOpen(EPage page)
+        {
+            try
+            {
+                return UIManager.Instance.IsPageInStack(page);
+            }
+            catch (System.Exception)
+            {
+                return false;
             }
         }
 
@@ -1090,22 +1109,54 @@ namespace TfmCardRefresh
             _keyHints.Clear();
             try
             {
-                foreach (HUD_TopActionButton button in
-                    Object.FindObjectsByType<HUD_TopActionButton>(FindObjectsSortMode.None))
+                EnsureTabButtonsCached();
+                // Draw the hint for every tab that is currently on screen. Use
+                // activeInHierarchy (visible) rather than isActiveAndEnabled: a tab you
+                // can't act on yet is greyed (component disabled) but still openable,
+                // so its key should still show, not just Standard Projects.
+                foreach ((HUD_TopActionButton btn, string label) in _tabButtons)
                 {
-                    if (button == null || !button.isActiveAndEnabled)
+                    if (btn != null && btn.gameObject.activeInHierarchy)
                     {
-                        continue;
-                    }
-                    string label = KeyForActionType(button.GetActionType());
-                    if (label != null && IsCentreOnScreen(button.transform))
-                    {
-                        _keyHints.Add((button.transform, label));
+                        _keyHints.Add((btn.transform, label));
                     }
                 }
             }
             catch (System.Exception)
             {
+            }
+        }
+
+        // Find the three top tab buttons once and cache them. Re-find only if the
+        // cache is empty or a cached button was destroyed (e.g. leaving the game).
+        private void EnsureTabButtonsCached()
+        {
+            bool valid = _tabButtons.Count > 0;
+            for (int i = 0; i < _tabButtons.Count; i++)
+            {
+                if (_tabButtons[i].btn == null)
+                {
+                    valid = false;
+                    break;
+                }
+            }
+            if (valid || !Singleton<GameManager>.IsInstanced)
+            {
+                return;
+            }
+            _tabButtons.Clear();
+            foreach (HUD_TopActionButton b in
+                Object.FindObjectsByType<HUD_TopActionButton>(FindObjectsSortMode.None))
+            {
+                if (b == null)
+                {
+                    continue;
+                }
+                string label = KeyForActionType(b.GetActionType());
+                if (label != null)
+                {
+                    _tabButtons.Add((b, label));
+                }
             }
         }
 
@@ -1130,7 +1181,8 @@ namespace TfmCardRefresh
             s_activeViewport = ActiveScrollViewport();
             try
             {
-                CardActionChoiceController choiceController = FindActiveChoiceController();
+                CardActionChoiceController choiceController =
+                    PageOpen(EPage.ChooseCardActionCardPage) ? FindActiveChoiceController() : null;
                 if (choiceController != null)
                 {
                     Traverse ct = Traverse.Create(choiceController);
@@ -1148,7 +1200,8 @@ namespace TfmCardRefresh
                 }
 
                 // "Select any production/resource" popup: each player entry.
-                StealResourcePage steal = Object.FindFirstObjectByType<StealResourcePage>();
+                StealResourcePage steal =
+                    PageOpen(EPage.StealResourcePage) ? Object.FindFirstObjectByType<StealResourcePage>() : null;
                 if (steal != null)
                 {
                     System.Collections.IEnumerable els =
@@ -1168,7 +1221,8 @@ namespace TfmCardRefresh
                     return;
                 }
 
-                CardActionsPopup actionsPopup = Object.FindFirstObjectByType<CardActionsPopup>();
+                CardActionsPopup actionsPopup =
+                    PageOpen(EPage.CardActionsPopup) ? Object.FindFirstObjectByType<CardActionsPopup>() : null;
                 if (actionsPopup != null)
                 {
                     foreach (CardActionElement element in actionsPopup.GetComponentsInChildren<CardActionElement>())
@@ -1181,7 +1235,8 @@ namespace TfmCardRefresh
 
                 // Buy/keep selection (CardSelectionPage, "BUY UP TO N CARDS"): number
                 // toggles that card's selection. Enumerate the page's own card list.
-                CardSelectionPage selPage = Object.FindFirstObjectByType<CardSelectionPage>();
+                CardSelectionPage selPage =
+                    PageOpen(EPage.CardSelectionPage) ? Object.FindFirstObjectByType<CardSelectionPage>() : null;
                 if (selPage != null && AddSelectableCardPreviews(selPage, "m_AllCardPreviews"))
                 {
                     return;
@@ -1190,14 +1245,16 @@ namespace TfmCardRefresh
                 // Sell / discard patents (SellPatentPopupPage, "SELECT CARD TO
                 // DISCARD" / "SELL PATENTS"): number toggles that card's selection,
                 // then the page's confirm button (Space) commits.
-                SellPatentPopupPage sellPage = Object.FindFirstObjectByType<SellPatentPopupPage>();
+                SellPatentPopupPage sellPage =
+                    PageOpen(EPage.SellPatentPopupPage) ? Object.FindFirstObjectByType<SellPatentPopupPage>() : null;
                 if (sellPage != null && AddSelectableCardPreviews(sellPage, "m_AllCardPreviews"))
                 {
                     return;
                 }
 
                 // "Select any resource" card-resource list: number selects that row.
-                PlayerCardResourcePage resPage = Object.FindFirstObjectByType<PlayerCardResourcePage>();
+                PlayerCardResourcePage resPage =
+                    PageOpen(EPage.PlayerCardResourcePage) ? Object.FindFirstObjectByType<PlayerCardResourcePage>() : null;
                 if (resPage != null)
                 {
                     foreach (CardResourceElement row in CardResourceRows(resPage))
@@ -1218,7 +1275,8 @@ namespace TfmCardRefresh
                 // Hand browse grid (ViewPlayerCardsPage): number opens the card (or
                 // presses its Select button if it has one). Enumerate the page's own
                 // card list so board/tray cards are never numbered.
-                ViewPlayerCardsPage viewPage = Object.FindFirstObjectByType<ViewPlayerCardsPage>();
+                ViewPlayerCardsPage viewPage =
+                    PageOpen(EPage.ViewPlayerCardsPage) ? Object.FindFirstObjectByType<ViewPlayerCardsPage>() : null;
                 if (viewPage != null)
                 {
                     System.Collections.IEnumerable cardObjs =
@@ -1252,7 +1310,8 @@ namespace TfmCardRefresh
                 // active Use/Buy button. Scope the search to the carousel's own
                 // children so this never scans the whole scene (the other selectable
                 // contexts all have their own branch above).
-                ExpandPlayerCardsPage carousel = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+                ExpandPlayerCardsPage carousel =
+                    PageOpen(EPage.ExpandPlayerCardsPage) ? Object.FindFirstObjectByType<ExpandPlayerCardsPage>() : null;
                 if (carousel == null)
                 {
                     return;
@@ -1761,33 +1820,38 @@ namespace TfmCardRefresh
         // grid, or buy/keep selection).
         private static ScrollSnapRect FindActiveCardScroll()
         {
-            ExpandPlayerCardsPage carousel = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
-            if (carousel != null && carousel.ScrollSnapRect != null)
+            // Each scan is gated on its page being open so this is cheap when no card
+            // scroller is up (the common case while Cmd/Ctrl is held on the board).
+            if (PageOpen(EPage.ExpandPlayerCardsPage))
             {
-                return carousel.ScrollSnapRect;
+                ExpandPlayerCardsPage carousel = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+                if (carousel != null && carousel.ScrollSnapRect != null)
+                {
+                    return carousel.ScrollSnapRect;
+                }
             }
-            ViewPlayerCardsPage grid = Object.FindFirstObjectByType<ViewPlayerCardsPage>();
-            if (grid != null)
+            if (PageOpen(EPage.ViewPlayerCardsPage))
             {
-                ScrollSnapRect s = grid.GetComponentInChildren<ScrollSnapRect>();
+                ViewPlayerCardsPage grid = Object.FindFirstObjectByType<ViewPlayerCardsPage>();
+                ScrollSnapRect s = (grid != null) ? grid.GetComponentInChildren<ScrollSnapRect>() : null;
                 if (s != null)
                 {
                     return s;
                 }
             }
-            CardSelectionPage select = Object.FindFirstObjectByType<CardSelectionPage>();
-            if (select != null)
+            if (PageOpen(EPage.CardSelectionPage))
             {
-                ScrollSnapRect s = select.GetComponentInChildren<ScrollSnapRect>();
+                CardSelectionPage select = Object.FindFirstObjectByType<CardSelectionPage>();
+                ScrollSnapRect s = (select != null) ? select.GetComponentInChildren<ScrollSnapRect>() : null;
                 if (s != null)
                 {
                     return s;
                 }
             }
-            SellPatentPopupPage sell = Object.FindFirstObjectByType<SellPatentPopupPage>();
-            if (sell != null)
+            if (PageOpen(EPage.SellPatentPopupPage))
             {
-                ScrollSnapRect s = sell.GetComponentInChildren<ScrollSnapRect>();
+                SellPatentPopupPage sell = Object.FindFirstObjectByType<SellPatentPopupPage>();
+                ScrollSnapRect s = (sell != null) ? sell.GetComponentInChildren<ScrollSnapRect>() : null;
                 if (s != null)
                 {
                     return s;

@@ -810,18 +810,29 @@ namespace TfmCardRefresh
                     return;
                 }
 
-                // Card selection menus (hand carousel, discard/buy selection): each
-                // big card, left-to-right. Number presses its own Use/Select button.
-                BigCardPreview[] cards = Object.FindObjectsByType<BigCardPreview>(FindObjectsSortMode.None);
-                if (cards.Length > 0)
+                // Any card with an active, interactable Select/Use/Buy button: the
+                // hand carousel, buy/discard/keep selection, etc. Ordered top row
+                // first, then left to right. Number presses that card's own button.
+                List<BaseCardPreview> cards = new List<BaseCardPreview>();
+                foreach (BaseCardPreview pv in Object.FindObjectsByType<BaseCardPreview>(FindObjectsSortMode.None))
                 {
-                    List<BigCardPreview> sorted = new List<BigCardPreview>(cards);
-                    sorted.Sort((a, b) => a.transform.position.x.CompareTo(b.transform.position.x));
-                    foreach (BigCardPreview c in sorted)
+                    if (CardButton(pv) != null)
                     {
-                        BigCardPreview card = c;
-                        _targets.Add((card.transform, () => PressCardButton(card)));
+                        cards.Add(pv);
                     }
+                }
+                cards.Sort((a, b) =>
+                {
+                    float ay = Mathf.Round(a.transform.position.y / 40f);
+                    float by = Mathf.Round(b.transform.position.y / 40f);
+                    return ay != by
+                        ? by.CompareTo(ay)
+                        : a.transform.position.x.CompareTo(b.transform.position.x);
+                });
+                foreach (BaseCardPreview c in cards)
+                {
+                    BaseCardPreview card = c;
+                    _targets.Add((card.transform, () => PressCardButton(card)));
                 }
             }
             catch (System.Exception)
@@ -829,19 +840,26 @@ namespace TfmCardRefresh
             }
         }
 
-        private static void PressCardButton(BigCardPreview card)
+        // The card's own Select/Use/Buy button, only if it is currently clickable.
+        private static Button CardButton(BaseCardPreview card)
         {
             try
             {
                 Button btn = Traverse.Create(card).Field("m_Btn").GetValue<Button>();
                 if (btn != null && btn.interactable && btn.gameObject.activeInHierarchy)
                 {
-                    btn.onClick.Invoke();
+                    return btn;
                 }
             }
             catch (System.Exception)
             {
             }
+            return null;
+        }
+
+        private static void PressCardButton(BaseCardPreview card)
+        {
+            CardButton(card)?.onClick.Invoke();
         }
 
         private void ActivateNumberedTarget(int zeroBasedIndex)

@@ -18,8 +18,8 @@ client honest and quicker to drive.
 
 You need the game installed through **Steam** first. Then:
 
-1. **Download the mod.** On this page click the green **Code** button, then
-   **Download ZIP** (or grab the ZIP from the Releases page).
+1. **Download the mod.** On the GitHub page click the green **Code** button, then
+   **Download ZIP**.
 2. **Unzip it** (double-click the downloaded file).
 3. **Double-click the installer** for your computer, inside the unzipped folder:
    - **macOS:** `Install (macOS).command`

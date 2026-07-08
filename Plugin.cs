@@ -55,7 +55,8 @@ namespace TfmCardRefresh
 
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
-            FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys;
+            FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys,
+            FeatAutoMaxPayment;
 
         internal static bool On(ConfigEntry<bool> e)
         {
@@ -94,6 +95,7 @@ namespace TfmCardRefresh
             FeatPlayabilityDim = Config.Bind("Features", "DimUnplayableInHandView", true, "Dim requirement-locked cards in the off-turn hand view");
             FeatActionAvailability = Config.Bind("Features", "ShowActionAvailabilityOffTurn", true, "Show which card actions are usable during opponents' turns");
             FeatActionSort = Config.Bind("Features", "SortUsableActionsFirst", true, "Sort usable actions to the top of the actions popup");
+            FeatAutoMaxPayment = Config.Bind("Features", "AutoMaxSteelTitaniumPayment", true, "When playing a card, pre-fill steel/titanium to cover the cost (not more)");
         }
 
         private void Awake()
@@ -1608,6 +1610,50 @@ namespace TfmCardRefresh
     // never shown and exactly this one card is sold. If this postfix never fires,
     // the event stays empty and the game just opens the popup as usual (no wrong
     // card can be sold).
+    // When a card preview opens its "decrease cost" panel, pre-fill steel/titanium
+    // to cover the megacredit cost, but no more than needed (greedy per panel, each
+    // capped at ceil(remaining cost / rate) and the panel's max). You can still nudge
+    // it afterwards. Toggle with Features/AutoMaxSteelTitaniumPayment.
+    [HarmonyPatch(typeof(BigCardPreview), "ConfigureDecreaseCostPanel")]
+    internal static class AutoMaxPaymentPatch
+    {
+        private static void Postfix(BigCardPreview __instance)
+        {
+            if (!TfmCardRefreshPlugin.On(TfmCardRefreshPlugin.FeatAutoMaxPayment))
+            {
+                return;
+            }
+            try
+            {
+                CardCostDecreaseController ctrl =
+                    Traverse.Create(__instance).Field("m_DecreaseCostController").GetValue<CardCostDecreaseController>();
+                if (ctrl == null || !ctrl.enabled || ctrl.ResourceConversionPanels == null)
+                {
+                    return;
+                }
+                foreach (ResourceConversionPanel panel in ctrl.ResourceConversionPanels)
+                {
+                    if (panel == null || !panel.gameObject.activeInHierarchy)
+                    {
+                        continue;
+                    }
+                    int remaining = ctrl.CurrentCost;
+                    int rate = panel.ConversionRate;
+                    if (remaining <= 0 || rate <= 0)
+                    {
+                        panel.SetResourceAmount(panel.MinResourceAmount);
+                        continue;
+                    }
+                    int needed = Mathf.CeilToInt((float)remaining / rate);
+                    panel.SetResourceAmount(Mathf.Clamp(needed, panel.MinResourceAmount, panel.MaxResourceAmount));
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(SellCardsPlayerAction), nameof(SellCardsPlayerAction.CreateActionEventSpecific))]
     internal static class InjectDirectSellPatch
     {

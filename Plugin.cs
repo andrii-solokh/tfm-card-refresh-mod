@@ -361,7 +361,28 @@ namespace TfmCardRefresh
                 _showOverlay = !_showOverlay;
                 return;
             }
-            if (!On(FeatHotkeys) || IsTextInputFocused())
+            if (!On(FeatHotkeys))
+            {
+                return;
+            }
+            // Cmd/Ctrl+number uses the numbered item. Handled before the text-focus
+            // guard because a modifier combo is never chat input; otherwise these keys
+            // looked dead whenever a field (e.g. chat) auto-focused after a turn, until
+            // you clicked elsewhere to deselect it.
+            if (ModifierHeld())
+            {
+                for (int n = 0; n < 9; n++)
+                {
+                    if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
+                    {
+                        ActivateNumberedTarget(n);
+                        return;
+                    }
+                }
+                return;
+            }
+            // Bare keys below can be typed into a field, so suppress while one is focused.
+            if (IsTextInputFocused())
             {
                 return;
             }
@@ -415,15 +436,7 @@ namespace TfmCardRefresh
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
                 {
-                    // Bare number = focus player; Cmd/Ctrl+number = use the numbered card/action.
-                    if (ModifierHeld())
-                    {
-                        ActivateNumberedTarget(n);
-                    }
-                    else
-                    {
-                        FocusPlayer(n);
-                    }
+                    FocusPlayer(n); // Cmd/Ctrl+number is handled above
                     return;
                 }
             }

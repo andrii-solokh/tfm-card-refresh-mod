@@ -53,17 +53,18 @@ namespace TfmCardRefresh
         private bool _prevIsMyTurn;
         private bool _reopenHandAfterPass;
         private bool _showOverlay;
+        private bool _showScoreboard;
 
         // ---- Config: rebindable keys (edit BepInEx/config/<guid>.cfg) ----
         internal static ConfigEntry<KeyCode> KeyProjects, KeyActions, KeyResources, KeyVictoryPoints,
-            KeyEffects, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm,
+            KeyEffects, KeyTags, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm,
             KeyNavUp, KeyNavDown, KeyNavLeft, KeyNavRight, KeyOverlay,
-            KeyMilestones, KeyStandardProjects, KeyAwards;
+            KeyMilestones, KeyStandardProjects, KeyAwards, KeyScoreboard;
 
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
             FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys,
-            FeatAutoMaxPayment, FeatIndicator, FeatTurnSound;
+            FeatAutoMaxPayment, FeatIndicator, FeatTurnSound, FeatScoreboard;
 
         // The sound played when your action turn begins (a game SFX id).
         internal static ConfigEntry<string> TurnStartSound;
@@ -80,13 +81,14 @@ namespace TfmCardRefresh
 
         private void BindConfig()
         {
-            KeyProjects = Config.Bind("Keys", "Projects", KeyCode.P, "Open/close your hand (projects)");
+            KeyProjects = Config.Bind("Keys", "Projects", KeyCode.C, "Open/close your hand (projects) (hold Cmd/Ctrl)");
             KeyActions = Config.Bind("Keys", "Actions", KeyCode.A, "Open the card Actions popup");
             KeyResources = Config.Bind("Keys", "Resources", KeyCode.R, "Open the Card Resources popup");
             KeyVictoryPoints = Config.Bind("Keys", "VictoryPoints", KeyCode.V, "Open the Victory Points popup");
             KeyEffects = Config.Bind("Keys", "Effects", KeyCode.E, "Open the Effects popup");
-            KeyGreenery = Config.Bind("Keys", "ConvertGreenery", KeyCode.G, "Convert plants to a greenery");
-            KeyTemperature = Config.Bind("Keys", "ConvertTemperature", KeyCode.T, "Convert heat to raise temperature");
+            KeyTags = Config.Bind("Keys", "Tags", KeyCode.T, "Open the Card Tags popup");
+            KeyGreenery = Config.Bind("Keys", "ConvertGreenery", KeyCode.G, "Convert plants to a greenery (hold Cmd/Ctrl)");
+            KeyTemperature = Config.Bind("Keys", "ConvertTemperature", KeyCode.F, "Convert heat to raise temperature (hold Cmd/Ctrl)");
             KeySell = Config.Bind("Keys", "Sell", KeyCode.S, "Sell cards (Sell Patents)");
             KeyBoard = Config.Bind("Keys", "BoardView", KeyCode.B, "Toggle View state / Return (inspect board)");
             KeyConfirm = Config.Bind("Keys", "Confirm", KeyCode.Space, "Confirm the default button of the open dialog/card");
@@ -98,6 +100,7 @@ namespace TfmCardRefresh
             KeyMilestones = Config.Bind("Keys", "Milestones", KeyCode.M, "Open/close the Milestones tab");
             KeyStandardProjects = Config.Bind("Keys", "StandardProjects", KeyCode.K, "Open/close the Standard Projects tab");
             KeyAwards = Config.Bind("Keys", "Awards", KeyCode.W, "Open/close the Awards tab");
+            KeyScoreboard = Config.Bind("Keys", "Scoreboard", KeyCode.Tab, "Toggle the live scoreboard (current VP from all sources)");
 
             FeatHotkeys = Config.Bind("Features", "Hotkeys", true, "Master switch for all keyboard shortcuts");
             FeatCardRefresh = Config.Bind("Features", "CardRefresh", true, "Re-check card playability when game state changes");
@@ -111,6 +114,7 @@ namespace TfmCardRefresh
             FeatAutoMaxPayment = Config.Bind("Features", "AutoMaxSteelTitaniumPayment", true, "When playing a card, pre-fill steel/titanium to cover the cost (not more)");
             FeatIndicator = Config.Bind("Features", "ShowRunningIndicator", true, "Show a small always-on 'mod running' marker in the corner");
             FeatTurnSound = Config.Bind("Features", "PlayTurnStartSound", true, "Play a sound when your action turn begins (announcements stay hidden)");
+            FeatScoreboard = Config.Bind("Features", "Scoreboard", true, "Enable the live scoreboard panel (current VP breakdown for all players)");
             TurnStartSound = Config.Bind("Features", "TurnStartSound", "SFX_OTHER_PLAYER_TURN", "Sound id for the turn-start ping (e.g. SFX_OTHER_PLAYER_TURN, SFX_MENU_CONFIRM, SFX_POPUP_OPEN)");
         }
 
@@ -134,44 +138,82 @@ namespace TfmCardRefresh
         private static GUIStyle s_indicatorStyle;
         private static GUIStyle s_keyHintStyle;
 
+        // Chip backing for the Cmd/Ctrl badges/hints: a dark translucent fill with a
+        // mint border, so the letters read against busy card art.
+        private static Texture2D s_chipFill;
+        private static Texture2D s_chipBorder;
+
+        private static Texture2D SolidTexture(Color c)
+        {
+            Texture2D t = new Texture2D(1, 1);
+            t.SetPixel(0, 0, c);
+            t.Apply();
+            return t;
+        }
+
+        // Draw a filled, bordered chip in the given screen rect (IMGUI space).
+        private static void DrawChip(Rect box)
+        {
+            if (s_chipFill == null)
+            {
+                s_chipFill = SolidTexture(new Color(0.03f, 0.09f, 0.11f, 0.86f));
+                s_chipBorder = SolidTexture(new Color(0.05f, 0.95f, 0.58f, 0.95f)); // brand mint
+            }
+            const float b = 2f;
+            GUI.DrawTexture(box, s_chipFill);
+            GUI.DrawTexture(new Rect(box.x, box.y, box.width, b), s_chipBorder);
+            GUI.DrawTexture(new Rect(box.x, box.yMax - b, box.width, b), s_chipBorder);
+            GUI.DrawTexture(new Rect(box.x, box.y, b, box.height), s_chipBorder);
+            GUI.DrawTexture(new Rect(box.xMax - b, box.y, b, box.height), s_chipBorder);
+        }
+
         private void OnGUI()
         {
             GUI.skin.label.richText = true;
             DrawRunningIndicator();
             DrawNumberBadges();
             DrawKeyHints();
+            DrawScoreboard();
 
             if (!_showOverlay)
             {
                 return;
             }
-            (ConfigEntry<KeyCode> key, KeyCode fallback, string label)[] rows =
+            // Everything below is a Cmd/Ctrl combo; the bare keys are listed separately.
+            (ConfigEntry<KeyCode> key, KeyCode fallback, string label)[] modRows =
             {
-                (KeyProjects, KeyCode.P, "Projects (hand)"),
+                (KeyProjects, KeyCode.C, "Projects (hand)"),
                 (KeyActions, KeyCode.A, "Actions"),
                 (KeyResources, KeyCode.R, "Resources"),
                 (KeyVictoryPoints, KeyCode.V, "Victory points"),
                 (KeyEffects, KeyCode.E, "Effects"),
+                (KeyTags, KeyCode.T, "Tags"),
                 (KeyMilestones, KeyCode.M, "Milestones"),
                 (KeyStandardProjects, KeyCode.K, "Standard projects"),
                 (KeyAwards, KeyCode.W, "Awards"),
-                (KeyGreenery, KeyCode.G, "Plants → greenery"),
-                (KeyTemperature, KeyCode.T, "Heat → temperature"),
                 (KeySell, KeyCode.S, "Sell cards"),
                 (KeyBoard, KeyCode.B, "View state / board"),
-                (KeyConfirm, KeyCode.Space, "Confirm / pass"),
-                (KeyNavUp, KeyCode.UpArrow, "Navigate up"),
-                (KeyNavDown, KeyCode.DownArrow, "Navigate down"),
+                (KeyOverlay, KeyCode.H, "This overlay"),
+                (KeyGreenery, KeyCode.G, "Plants → greenery"),
+                (KeyTemperature, KeyCode.F, "Heat → temperature"),
             };
-            float height = 52f + (rows.Length + 1) * 20f;
-            GUILayout.BeginArea(new Rect(12f, 12f, 320f, height), GUI.skin.box);
-            GUILayout.Label("<b>TFM mod — shortcuts</b>   (" + Key(KeyOverlay, KeyCode.H) + " to hide)");
-            foreach ((ConfigEntry<KeyCode> key, KeyCode fallback, string label) in rows)
+            int lines = 8 + 2 + modRows.Length; // headers + bare rows + target rows + mod rows
+            float height = 34f + lines * 20f;
+            GUILayout.BeginArea(new Rect(12f, 12f, 340f, height), GUI.skin.box);
+            GUILayout.Label("<b>TFM mod shortcuts</b>   (Cmd/Ctrl+" + Key(KeyOverlay, KeyCode.H) + " to hide)");
+            GUILayout.Label("  <b>Bare</b>");
+            GUILayout.Label("  " + "Space".PadRight(12) + "Confirm / pass");
+            GUILayout.Label("  " + "Esc".PadRight(12) + "Cancel / No");
+            GUILayout.Label("  " + "↑ / ↓ / ← / →".PadRight(12) + "Navigate a list / pages");
+            GUILayout.Label("  " + Key(KeyScoreboard, KeyCode.Tab).ToString().PadRight(12) + "Scoreboard");
+            GUILayout.Label("  " + "1-5".PadRight(12) + "Focus player (1 = you)");
+            GUILayout.Label("  <b>Hold Cmd/Ctrl</b>");
+            GUILayout.Label("  " + "1-4 Q W E R".PadRight(12) + "Play / use on-screen item");
+            GUILayout.Label("  " + "5-9".PadRight(12) + "Sort tabs (in hand)");
+            foreach ((ConfigEntry<KeyCode> key, KeyCode fallback, string label) in modRows)
             {
-                GUILayout.Label("  " + Key(key, fallback).ToString().PadRight(11) + label);
+                GUILayout.Label("  " + Key(key, fallback).ToString().PadRight(12) + label);
             }
-            GUILayout.Label("  " + "1-9".PadRight(11) + "Use numbered card/action");
-            GUILayout.Label("  " + "Cmd/Ctrl+1-4".PadRight(11) + "Focus player (1 = you)");
             GUILayout.EndArea();
         }
 
@@ -204,7 +246,7 @@ namespace TfmCardRefresh
 
         private void DrawNumberBadges()
         {
-            if (_targets.Count == 0 || !ModifierHeld())
+            if ((_targets.Count == 0 && _sortTargets.Count == 0) || !ModifierHeld())
             {
                 return;
             }
@@ -212,13 +254,13 @@ namespace TfmCardRefresh
             {
                 s_numberStyle = new GUIStyle
                 {
-                    fontSize = 34,
+                    fontSize = 28,
                     fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleLeft,
+                    alignment = TextAnchor.MiddleCenter,
                 };
                 s_numberStyle.normal.textColor = Color.white;
             }
-            for (int i = 0; i < _targets.Count && i < 9; i++)
+            for (int i = 0; i < _targets.Count && i < s_targetKeys.Length; i++)
             {
                 RectTransform rt = _targets[i].t as RectTransform;
                 if (rt == null)
@@ -226,16 +268,28 @@ namespace TfmCardRefresh
                     continue;
                 }
                 rt.GetWorldCorners(s_corners); // 0=BL 1=TL 2=TR 3=BR, screen px for overlay
-                float leftX = s_corners[0].x + 8f;
+                // Anchored near the card's upper-left, nudged up and left of the old
+                // mid-left spot so the chip clears the card art.
+                float leftX = s_corners[0].x - 6f;
                 float centerY = (s_corners[0].y + s_corners[1].y) * 0.5f;
-                Rect rect = new Rect(leftX, (Screen.height - centerY) - 22f, 44f, 44f);
-                string text = (i + 1).ToString();
-                Color prev = GUI.color;
-                GUI.color = Color.black;
-                GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), text, s_numberStyle);
-                GUI.color = Color.white;
-                GUI.Label(rect, text, s_numberStyle);
-                GUI.color = prev;
+                Rect chip = new Rect(leftX, (Screen.height - centerY) - 34f, 38f, 38f);
+                DrawChip(chip);
+                GUI.Label(chip, s_targetKeyLabels[i], s_numberStyle);
+            }
+            // Sort/filter tabs (5-9): centre a badge over each horizontal tab.
+            for (int i = 0; i < _sortTargets.Count && i < s_sortKeys.Length; i++)
+            {
+                RectTransform rt = _sortTargets[i].t as RectTransform;
+                if (rt == null)
+                {
+                    continue;
+                }
+                rt.GetWorldCorners(s_corners);
+                float centerX = (s_corners[0].x + s_corners[2].x) * 0.5f;
+                float centerY = (s_corners[0].y + s_corners[1].y) * 0.5f;
+                Rect chip = new Rect(centerX - 17f, (Screen.height - centerY) - 17f, 34f, 34f);
+                DrawChip(chip);
+                GUI.Label(chip, s_sortKeyLabels[i], s_numberStyle);
             }
         }
 
@@ -268,13 +322,289 @@ namespace TfmCardRefresh
                 rt.GetWorldCorners(s_corners);
                 float centerX = (s_corners[0].x + s_corners[2].x) * 0.5f;
                 float centerY = (s_corners[0].y + s_corners[1].y) * 0.5f;
-                Rect rect = new Rect(centerX - 40f, (Screen.height - centerY) - 16f, 80f, 32f);
-                Color prev = GUI.color;
-                GUI.color = Color.black;
-                GUI.Label(new Rect(rect.x + 2f, rect.y + 2f, rect.width, rect.height), label, s_keyHintStyle);
-                GUI.color = prev;
-                GUI.Label(rect, label, s_keyHintStyle);
+                Vector2 size = s_keyHintStyle.CalcSize(new GUIContent(label));
+                float w = Mathf.Max(size.x + 16f, 30f);
+                float h = Mathf.Max(size.y + 8f, 28f);
+                Rect chip = new Rect(centerX - w * 0.5f, (Screen.height - centerY) - h * 0.5f, w, h);
+                DrawChip(chip);
+                GUI.Label(chip, label, s_keyHintStyle);
             }
+        }
+
+        // One player's live score, split by source (matches the game's own
+        // scoreboard columns). Recomputed each frame the panel is open.
+        private struct ScoreRow
+        {
+            public string name;
+            public bool isMe;
+            public int tr, awards, milestones, greenery, city, cardVp, total;
+        }
+
+        private static readonly string[] s_scoreHeaders =
+            { "Player", "TR", "Award", "Mstn", "Grn", "City", "Card", "TOTAL" };
+        private static readonly float[] s_scoreColW =
+            { 176f, 58f, 68f, 64f, 56f, 56f, 60f, 78f };
+        private static GUIStyle s_scoreTitleStyle;
+        private static GUIStyle s_scoreCellStyle;
+
+        // The live "if the game ended now" scoreboard. Reimplements the game's
+        // ScoreManager.CalculatePlayerScore math (TR + greeneries + cities +
+        // milestones + awards + card VP) WITHOUT its achievement/save-data side
+        // effects, which fire when the real method runs on the human player.
+        private void DrawScoreboard()
+        {
+            if (!_showScoreboard || !On(FeatScoreboard))
+            {
+                return;
+            }
+            List<ScoreRow> rows = ComputeScores();
+            if (rows.Count == 0)
+            {
+                return;
+            }
+            if (s_scoreCellStyle == null)
+            {
+                s_scoreCellStyle = new GUIStyle { fontSize = 19, richText = true, alignment = TextAnchor.MiddleLeft };
+                s_scoreCellStyle.normal.textColor = Color.white;
+                s_scoreCellStyle.padding = new RectOffset(2, 2, 2, 2);
+                s_scoreTitleStyle = new GUIStyle { fontSize = 22, fontStyle = FontStyle.Bold, richText = true };
+                s_scoreTitleStyle.normal.textColor = new Color(0.05f, 0.95f, 0.58f, 1f);
+            }
+            float width = 28f;
+            for (int i = 0; i < s_scoreColW.Length; i++)
+            {
+                width += s_scoreColW[i];
+            }
+            const float rowH = 28f;
+            float height = 58f + (rows.Count + 1) * rowH;
+            float x = Screen.width - width - 14f; // top-right
+            GUILayout.BeginArea(new Rect(x, 12f, width, height), GUI.skin.box);
+            GUILayout.Label("SCOREBOARD  (live, " + Key(KeyScoreboard, KeyCode.Tab) + " to hide)", s_scoreTitleStyle);
+            GUILayout.Space(4f);
+            DrawScoreCells(s_scoreHeaders, bold: true);
+            foreach (ScoreRow r in rows)
+            {
+                string[] cells =
+                {
+                    (r.isMe ? "▸ " : "") + r.name,
+                    r.tr.ToString(), r.awards.ToString(), r.milestones.ToString(),
+                    r.greenery.ToString(), r.city.ToString(), r.cardVp.ToString(), r.total.ToString(),
+                };
+                DrawScoreCells(cells, bold: r.isMe);
+            }
+            GUILayout.EndArea();
+        }
+
+        private static void DrawScoreCells(string[] cells, bool bold)
+        {
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < cells.Length && i < s_scoreColW.Length; i++)
+            {
+                string text = bold ? "<b>" + cells[i] + "</b>" : cells[i];
+                GUILayout.Label(text, s_scoreCellStyle, GUILayout.Width(s_scoreColW[i]));
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        private List<ScoreRow> ComputeScores()
+        {
+            List<ScoreRow> rows = new List<ScoreRow>();
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return rows;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameData data = (game != null) ? game.GameData : null;
+                TM_GameInfo info = (game != null) ? game.GameInfo : null;
+                if (data == null || info == null || data.PlayerBoardData == null)
+                {
+                    return rows;
+                }
+                TM_GameBoardData board = data.BoardData;
+                bool solo = info.IsSoloModeGame();
+                int myId = info.GetMyPlayerLocalId();
+                List<int> playerIds = new List<int>(data.PlayerBoardData.Keys);
+                Dictionary<int, int> awardTotals = solo ? null : ComputeAwardScores(game, data, playerIds);
+
+                foreach (KeyValuePair<int, TM_PlayerBoardData> kv in data.PlayerBoardData)
+                {
+                    TM_PlayerBoardData pbd = kv.Value;
+                    if (pbd == null)
+                    {
+                        continue;
+                    }
+                    int pid = kv.Key;
+                    int tr = pbd.TerraformingRating;
+                    int city = CitiesScore(board, pid);
+                    int green = GreeneriesScore(board, pid);
+                    int mile = MilestonesScore(data, pid);
+                    int awards = (awardTotals != null && awardTotals.ContainsKey(pid)) ? awardTotals[pid] : 0;
+                    int cardVp = 0;
+                    try
+                    {
+                        cardVp = pbd.VictoryPointBank.CalculateVictoryPoints();
+                    }
+                    catch (System.Exception)
+                    {
+                    }
+                    rows.Add(new ScoreRow
+                    {
+                        name = PlayerName(info, pid),
+                        isMe = pid == myId,
+                        tr = tr,
+                        awards = awards,
+                        milestones = mile,
+                        greenery = green,
+                        city = city,
+                        cardVp = cardVp,
+                        total = tr + awards + mile + green + city + cardVp,
+                    });
+                }
+                rows.Sort((a, b) => b.total.CompareTo(a.total));
+            }
+            catch (System.Exception)
+            {
+            }
+            return rows;
+        }
+
+        // City VP: each city tile scores 1 per adjacent greenery (any owner).
+        private static int CitiesScore(TM_GameBoardData board, int pid)
+        {
+            if (board == null)
+            {
+                return 0;
+            }
+            int n = 0;
+            var cities = board.GetPlacedTiles(pid, GridTileTypeHelper.CityTileTypes);
+            if (cities == null)
+            {
+                return 0;
+            }
+            for (int i = 0; i < cities.Count; i++)
+            {
+                int tileId = cities[i].Infos.TileID;
+                var greeneriesInRange = board.GetTileSlotsInRange(tileId, EGridTileType.Greenery);
+                if (greeneriesInRange != null)
+                {
+                    n += greeneriesInRange.Count;
+                }
+            }
+            return n;
+        }
+
+        // Greenery VP: 1 per greenery tile the player owns.
+        private static int GreeneriesScore(TM_GameBoardData board, int pid)
+        {
+            if (board == null)
+            {
+                return 0;
+            }
+            var tiles = board.GetPlacedTiles(EGridTileType.Greenery, pid);
+            return (tiles != null) ? tiles.Count : 0;
+        }
+
+        // Milestone VP: ScoreValue (5) per milestone this player has claimed.
+        private static int MilestonesScore(TM_GameData data, int pid)
+        {
+            if (data == null || data.MilestonesData == null)
+            {
+                return 0;
+            }
+            var achievements = data.MilestonesData.GetAchievements();
+            if (achievements == null)
+            {
+                return 0;
+            }
+            int n = 0;
+            foreach (var a in achievements)
+            {
+                if (a != null && a.Item2 == pid && a.Item1 != EMilestoneType.None)
+                {
+                    n += data.MilestonesData.ScoreValue;
+                }
+            }
+            return n;
+        }
+
+        // Award VP per player, ported from ScoreManager.CalculateAwardPlayerScores:
+        // for each FUNDED award, the leader(s) get FirstScoreValue; in 3+ player
+        // games with a unique leader, the sole runner-up gets SecondScoreValue.
+        private static Dictionary<int, int> ComputeAwardScores(TM_Game game, TM_GameData data, List<int> playerIds)
+        {
+            Dictionary<int, int> totals = new Dictionary<int, int>();
+            foreach (int pid in playerIds)
+            {
+                totals[pid] = 0;
+            }
+            var awardsData = data.AwardsData;
+            if (awardsData == null)
+            {
+                return totals;
+            }
+            int mask = awardsData.PurchasedAchievements;
+            int playerCount = playerIds.Count;
+            foreach (object value in System.Enum.GetValues(typeof(EAwardType)))
+            {
+                EAwardType award = (EAwardType)value;
+                if (award == EAwardType.None || (mask & (int)award) == 0)
+                {
+                    continue;
+                }
+                int max = int.MinValue;
+                int second = int.MinValue;
+                bool uniqueMax = true;
+                List<KeyValuePair<int, int>> progress = new List<KeyValuePair<int, int>>(playerCount);
+                foreach (int pid in playerIds)
+                {
+                    int v = AchievementHandler.GetPlayerAwardProgressValue(award, pid, game);
+                    if (v > max)
+                    {
+                        uniqueMax = true;
+                        second = max;
+                        max = v;
+                    }
+                    else if (v == max)
+                    {
+                        uniqueMax = false;
+                    }
+                    else if (v > second)
+                    {
+                        second = v;
+                    }
+                    progress.Add(new KeyValuePair<int, int>(pid, v));
+                }
+                foreach (KeyValuePair<int, int> p in progress)
+                {
+                    if (p.Value == max)
+                    {
+                        totals[p.Key] += awardsData.FirstScoreValue;
+                    }
+                    else if (playerCount > 2 && uniqueMax && p.Value == second)
+                    {
+                        totals[p.Key] += awardsData.SecondScoreValue;
+                    }
+                }
+            }
+            return totals;
+        }
+
+        private static string PlayerName(TM_GameInfo info, int pid)
+        {
+            try
+            {
+                TM_Player p = info.GetPlayerWithLocalId(pid);
+                if (p != null && !string.IsNullOrEmpty(p.Name))
+                {
+                    return p.Name;
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return "Player " + pid;
         }
 
         private void Update()
@@ -303,6 +633,10 @@ namespace TfmCardRefresh
                 if (_targets.Count > 0)
                 {
                     _targets.Clear();
+                }
+                if (_sortTargets.Count > 0)
+                {
+                    _sortTargets.Clear();
                 }
                 if (_keyHints.Count > 0)
                 {
@@ -468,8 +802,8 @@ namespace TfmCardRefresh
 
         private void HandleHotkeys()
         {
-            // Overlay toggle works regardless of the master switch or text focus.
-            if (Input.GetKeyDown(Key(KeyOverlay, KeyCode.H)))
+            // Overlay help: Cmd/Ctrl+H, works regardless of the master switch or focus.
+            if (ModifierHeld() && Input.GetKeyDown(Key(KeyOverlay, KeyCode.H)))
             {
                 _showOverlay = !_showOverlay;
                 return;
@@ -478,27 +812,118 @@ namespace TfmCardRefresh
             {
                 return;
             }
-            // Cmd/Ctrl+number uses the numbered item. Handled before the text-focus
-            // guard because a modifier combo is never chat input; otherwise these keys
-            // looked dead whenever a field (e.g. chat) auto-focused after a turn, until
-            // you clicked elsewhere to deselect it.
+            // ESC cancels: press NO / Close on an open confirm dialog, else dismiss the
+            // mod's own panels. Handled first, before any focus guard.
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                HandleEscape();
+                return;
+            }
+            // Every action lives on the Cmd/Ctrl layer now (no bare letters), so a
+            // modifier combo is never chat input and is handled before the text guard.
             if (ModifierHeld())
             {
-                for (int n = 0; n < 9; n++)
+                // Numbered card/action items own the shared keys (W/E/R also name card
+                // slots 6-8): only consume the key when a target fills that slot, else
+                // fall through to the panel bound to the same letter.
+                for (int i = 0; i < s_targetKeys.Length; i++)
                 {
-                    if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
+                    if ((Input.GetKeyDown(s_targetKeys[i]) || (i < 4 && Input.GetKeyDown(KeyCode.Keypad1 + i)))
+                        && i < _targets.Count)
                     {
-                        ActivateNumberedTarget(n);
+                        ActivateNumberedTarget(i);
                         return;
                     }
                 }
+                // Secondary group: the hand's sort/filter tabs, badged 5-9.
+                for (int i = 0; i < s_sortKeys.Length; i++)
+                {
+                    if ((Input.GetKeyDown(s_sortKeys[i]) || Input.GetKeyDown(KeyCode.Keypad5 + i))
+                        && i < _sortTargets.Count)
+                    {
+                        ActivateSortTarget(i);
+                        return;
+                    }
+                }
+                // Conversions.
+                if (Input.GetKeyDown(Key(KeyGreenery, KeyCode.G)))
+                {
+                    Convert(EResourceType.Plant);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyTemperature, KeyCode.F)))
+                {
+                    Convert(EResourceType.Heat);
+                    return;
+                }
+                // Panels / actions.
+                if (Input.GetKeyDown(Key(KeyProjects, KeyCode.C)))
+                {
+                    ToggleHand();
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyActions, KeyCode.A)))
+                {
+                    TryTogglePopup(EPage.CardActionsPopup);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyResources, KeyCode.R)))
+                {
+                    TryTogglePopup(EPage.CardResourcesPopup);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyVictoryPoints, KeyCode.V)))
+                {
+                    TryTogglePopup(EPage.CardVictoryPointsPopup);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyEffects, KeyCode.E)))
+                {
+                    TryTogglePopup(EPage.CardEffectsPopup);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyTags, KeyCode.T)))
+                {
+                    TryTogglePopup(EPage.CardTagsPopup);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyMilestones, KeyCode.M)))
+                {
+                    ToggleActionTab(EActionType.Milestone);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyStandardProjects, KeyCode.K)))
+                {
+                    ToggleActionTab(EActionType.StandardProject);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyAwards, KeyCode.W)))
+                {
+                    ToggleActionTab(EActionType.Award);
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeySell, KeyCode.S)))
+                {
+                    SellFromHand();
+                    return;
+                }
+                if (Input.GetKeyDown(Key(KeyBoard, KeyCode.B)))
+                {
+                    ToggleBoardView();
+                    return;
+                }
                 return;
             }
-            // Bare keys below can be typed into a field, so suppress while one is
-            // focused, except when a mod-driven dialog is open: the game auto-focuses
-            // chat after a keyboard confirm, and Space/arrows must keep working there.
+            // Bare keys below (Tab / arrows / focus-player numbers) can land in a text
+            // field, so suppress them while one is focused, except when a mod-driven
+            // dialog is open (the game auto-focuses chat after a keyboard confirm).
             if (IsTextInputFocused() && !ModDialogOpen())
             {
+                return;
+            }
+            if (On(FeatScoreboard) && Input.GetKeyDown(Key(KeyScoreboard, KeyCode.Tab)))
+            {
+                _showScoreboard = !_showScoreboard;
                 return;
             }
             // Arrows repeat while held (hold to ramp an amount up/down quickly).
@@ -522,73 +947,14 @@ namespace TfmCardRefresh
                 NavigateHorizontal(right: true);
                 return;
             }
-            if (Input.GetKeyDown(Key(KeyProjects, KeyCode.P)))
-            {
-                ToggleHand();
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyGreenery, KeyCode.G)))
-            {
-                Convert(EResourceType.Plant);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyTemperature, KeyCode.T)))
-            {
-                Convert(EResourceType.Heat);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeySell, KeyCode.S)))
-            {
-                SellFromHand();
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyBoard, KeyCode.B)))
-            {
-                ToggleBoardView();
-                return;
-            }
-            for (int n = 0; n < 9; n++)
+            // Bare 1-5 (kept as an exception) focus a player's board.
+            for (int n = 0; n < 5; n++)
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
                 {
                     FocusPlayer(n); // Cmd/Ctrl+number is handled above
                     return;
                 }
-            }
-            if (Input.GetKeyDown(Key(KeyActions, KeyCode.A)))
-            {
-                TryTogglePopup(EPage.CardActionsPopup);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyResources, KeyCode.R)))
-            {
-                TryTogglePopup(EPage.CardResourcesPopup);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyVictoryPoints, KeyCode.V)))
-            {
-                TryTogglePopup(EPage.CardVictoryPointsPopup);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyEffects, KeyCode.E)))
-            {
-                TryTogglePopup(EPage.CardEffectsPopup);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyMilestones, KeyCode.M)))
-            {
-                ToggleActionTab(EActionType.Milestone);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyStandardProjects, KeyCode.K)))
-            {
-                ToggleActionTab(EActionType.StandardProject);
-                return;
-            }
-            if (Input.GetKeyDown(Key(KeyAwards, KeyCode.W)))
-            {
-                ToggleActionTab(EActionType.Award);
-                return;
             }
         }
 
@@ -1028,6 +1394,27 @@ namespace TfmCardRefresh
         // activate them; OnGUI draws a number over each.
         private readonly List<(Transform t, System.Action act)> _targets = new List<(Transform, System.Action)>();
 
+        // Keys that fire the numbered targets, in on-screen order (Cmd/Ctrl held).
+        // Cards 1-4 keep the number row; cards 5-8 use the q/w/e/r row instead of
+        // reaching for 5-8. More than eight on a page: change page and reuse these.
+        // s_targetKeyLabels is what DrawNumberBadges paints over each item.
+        private static readonly KeyCode[] s_targetKeys =
+        {
+            KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4,
+            KeyCode.Q, KeyCode.W, KeyCode.E, KeyCode.R,
+        };
+        private static readonly string[] s_targetKeyLabels = { "1", "2", "3", "4", "Q", "W", "E", "R" };
+
+        // Secondary numbered group for the hand's sort/filter tabs (COST, PLAYABILITY,
+        // CARD TYPE, TAGS, CHRONOLOGICAL). Kept off the card keys so both can show at
+        // once: cards on 1-4/QWER, filters on 5-9. Cmd/Ctrl held, same as the cards.
+        private readonly List<(Transform t, System.Action act)> _sortTargets = new List<(Transform, System.Action)>();
+        private static readonly KeyCode[] s_sortKeys =
+        {
+            KeyCode.Alpha5, KeyCode.Alpha6, KeyCode.Alpha7, KeyCode.Alpha8, KeyCode.Alpha9,
+        };
+        private static readonly string[] s_sortKeyLabels = { "5", "6", "7", "8", "9" };
+
         // Key-letter hints drawn over on-screen buttons while Cmd/Ctrl is held, so the
         // panel keys are discoverable. Refreshed on the same cadence as _targets.
         private readonly List<(Transform t, string label)> _keyHints = new List<(Transform, string)>();
@@ -1175,9 +1562,9 @@ namespace TfmCardRefresh
                 }
                 // Tray hand + conversion buttons.
                 HUD_PlayerTray tray = game.HUD.PlayerTray;
-                AddFieldTarget(tray, "m_CardHand", Key(KeyProjects, KeyCode.P).ToString());
+                AddFieldTarget(tray, "m_CardHand", Key(KeyProjects, KeyCode.C).ToString());
                 AddFieldTarget(tray, "m_PlantConversion", Key(KeyGreenery, KeyCode.G).ToString());
-                AddFieldTarget(tray, "m_HeatConversion", Key(KeyTemperature, KeyCode.T).ToString());
+                AddFieldTarget(tray, "m_HeatConversion", Key(KeyTemperature, KeyCode.F).ToString());
                 // Board-view toggle.
                 HUD_CheckGameStateToggle boardToggle = game.HUD.CheckGameStateToggle;
                 if (boardToggle != null)
@@ -1209,7 +1596,7 @@ namespace TfmCardRefresh
         }
 
         // The configured key for a tray stat-popup page, or null if that popup has no
-        // hotkey (e.g. the tags popup, which lost its key when T became temperature).
+        // hotkey.
         private static string KeyForPage(EPage page)
         {
             switch (page)
@@ -1222,6 +1609,8 @@ namespace TfmCardRefresh
                     return Key(KeyVictoryPoints, KeyCode.V).ToString();
                 case EPage.CardEffectsPopup:
                     return Key(KeyEffects, KeyCode.E).ToString();
+                case EPage.CardTagsPopup:
+                    return Key(KeyTags, KeyCode.T).ToString();
                 default:
                     return null;
             }
@@ -1245,6 +1634,7 @@ namespace TfmCardRefresh
         private void RefreshNumberedTargets()
         {
             _targets.Clear();
+            _sortTargets.Clear();
             s_activeViewport = ActiveScrollViewport();
             try
             {
@@ -1298,6 +1688,34 @@ namespace TfmCardRefresh
                         _targets.Add((el.transform, () => el.OnActionButtonTriggered()));
                     }
                     return;
+                }
+
+                // Standard Projects / Milestones / Awards tab (ActionPopup): number each
+                // currently-usable row (its Use button is shown) top-to-bottom, and the
+                // number presses that row's Use button.
+                ActionPopup actionPopup =
+                    PageOpen(EPage.ActionPopup) ? Object.FindFirstObjectByType<ActionPopup>() : null;
+                if (actionPopup != null)
+                {
+                    List<ActionElementBase> els = new List<ActionElementBase>();
+                    foreach (ActionElementBase element in actionPopup.GetComponentsInChildren<ActionElementBase>())
+                    {
+                        if (element != null && element.isActiveAndEnabled
+                            && IsOnScreen(element.transform) && ActionElementUsable(element))
+                        {
+                            els.Add(element);
+                        }
+                    }
+                    els.Sort((a, b) => b.transform.position.y.CompareTo(a.transform.position.y));
+                    foreach (ActionElementBase element in els)
+                    {
+                        ActionElementBase el = element;
+                        _targets.Add((el.transform, () => el.OnUseButtonPressed()));
+                    }
+                    if (_targets.Count > 0)
+                    {
+                        return;
+                    }
                 }
 
                 // Buy/keep selection (CardSelectionPage, "BUY UP TO N CARDS"): number
@@ -1367,6 +1785,8 @@ namespace TfmCardRefresh
                         _targets.Add((card.transform,
                             btn != null ? (System.Action)(() => btn.onClick.Invoke()) : (() => card.ExpandCardToView())));
                     }
+                    // Also badge the sort/filter tabs (5-9) shown along the bottom.
+                    PopulateSortTargets(viewPage);
                     if (_targets.Count > 0)
                     {
                         return;
@@ -1602,6 +2022,69 @@ namespace TfmCardRefresh
             }
             catch (System.Exception)
             {
+            }
+        }
+
+        private void ActivateSortTarget(int zeroBasedIndex)
+        {
+            if (zeroBasedIndex < 0 || zeroBasedIndex >= _sortTargets.Count)
+            {
+                return;
+            }
+            try
+            {
+                _sortTargets[zeroBasedIndex].act();
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Fill _sortTargets with the hand view's sort/filter tabs (COST, PLAYABILITY,
+        // CARD TYPE, TAGS, CHRONOLOGICAL), ordered left-to-right, so 5-9 press them.
+        private void PopulateSortTargets(ViewPlayerCardsPage viewPage)
+        {
+            try
+            {
+                GameObject container =
+                    Traverse.Create(viewPage).Field("m_FilterContainer").GetValue<GameObject>();
+                if (container == null || !container.activeInHierarchy)
+                {
+                    return;
+                }
+                List<Button> buttons = new List<Button>();
+                foreach (Button b in container.GetComponentsInChildren<Button>())
+                {
+                    if (b != null && b.isActiveAndEnabled && IsOnScreen(b.transform))
+                    {
+                        buttons.Add(b);
+                    }
+                }
+                buttons.Sort((a, b) => a.transform.position.x.CompareTo(b.transform.position.x));
+                for (int i = 0; i < buttons.Count && i < s_sortKeys.Length; i++)
+                {
+                    Button btn = buttons[i];
+                    _sortTargets.Add((btn.transform, () => btn.onClick.Invoke()));
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // True when an action row (standard project / milestone / award) is currently
+        // usable, i.e. its Use button is shown and interactable rather than the
+        // greyed "unavailable" button.
+        private static bool ActionElementUsable(ActionElementBase element)
+        {
+            try
+            {
+                Button use = Traverse.Create(element).Field("UseButton").GetValue<Button>();
+                return use != null && use.gameObject.activeInHierarchy && use.interactable;
+            }
+            catch (System.Exception)
+            {
+                return false;
             }
         }
 
@@ -2139,7 +2622,41 @@ namespace TfmCardRefresh
         // shown and interactable.
         private static void PressDefaultPopupButton(GenericPopup popup)
         {
-            string[] fields = { "DefaultYesButton", "DefaultOkButton" };
+            PressFirstActivePopupButton(popup, "DefaultYesButton", "DefaultOkButton");
+        }
+
+        // ESC: cancel an open confirm dialog by pressing its No / Close button, else
+        // dismiss whichever mod panel is showing (scoreboard, then help overlay).
+        private void HandleEscape()
+        {
+            try
+            {
+                GenericPopup popup = Object.FindFirstObjectByType<GenericPopup>();
+                if (popup != null)
+                {
+                    PressFirstActivePopupButton(popup, "DefaultNoButton", "DefaultCloseButton");
+                    ClearUiFocus();
+                    return;
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            if (_showScoreboard)
+            {
+                _showScoreboard = false;
+                return;
+            }
+            if (_showOverlay)
+            {
+                _showOverlay = false;
+            }
+        }
+
+        // Press the first of the named popup button fields that is shown and
+        // interactable. Shared by Space (Yes/Ok) and ESC (No/Close).
+        private static void PressFirstActivePopupButton(GenericPopup popup, params string[] fields)
+        {
             foreach (string field in fields)
             {
                 GameObject buttonObject = Traverse.Create(popup).Field(field).GetValue<GameObject>();

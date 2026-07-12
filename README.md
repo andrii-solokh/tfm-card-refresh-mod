@@ -122,42 +122,74 @@ Chainloader startup complete
 4. **Card view re-checks playability** on state change (no close/reopen).
 5. **Projects open on your turn**, and the hand reopens after you play a card.
 6. **Action availability shown off-turn** (unused actions active, used ones dim).
-7. **Full keyboard control** (see Hotkeys below): panel keys, number-badge card
-   select on Ctrl/Cmd, Space to confirm or pass.
+7. **Full keyboard control** (see Hotkeys below): every panel and action on the
+   Cmd/Ctrl layer, Space to confirm, `Esc` to cancel (presses **No / Close** on a
+   confirm dialog).
+8. **Number/letter badges to click by keyboard** — hold Cmd/Ctrl and the on-screen
+   choices light up: cards in hand or a picker (`1`–`4`, `Q W E R`), standard
+   projects / milestones / awards rows, and the hand's sort tabs (`5`–`9`). Press
+   the badge to activate that item.
+9. **Live scoreboard** (`Tab`) — a panel in the top-right showing every player's
+   current victory points, broken down by source (Terraforming Rating, Awards,
+   Milestones, Greenery, City, Card VP) with the total, sorted, your row marked.
+   Computed exactly like the game's end screen but read-only: it reflects the
+   standings *as if the game ended now* and never affects play.
 
 ## Hotkeys
 
-`Space` confirms the "SELECT ONE" popup, else an open dialog's Yes/OK, else
-Buy/Use/Select the focused card, and with nothing open it passes / skips / ends
-your turn (the board's end-turn button). `Up`/`Down` move the highlighted option
-in a SELECT ONE popup or resource list. Letters/numbers toggle panels (work
-off-turn; suppressed only while you're actively typing in chat):
+Almost everything lives on the **Cmd/Ctrl layer** now. The only bare keys are
+Space, Esc, the arrows, `Tab`, and `1`–`5`.
+
+> **macOS:** use **Ctrl** (not Cmd) for these combos. `Cmd+Q/W/H/M` etc. are
+> system shortcuts (quit / close / hide / minimise) and never reach the game. The
+> mod accepts Ctrl and Cmd equally, so Ctrl is the safe choice on a Mac.
+
+**Bare keys**
 
 | Key | Action |
 |-----|--------|
-| P | Projects (hand) |
+| Space | Confirm the SELECT ONE / dialog Yes-OK / focused card, else pass / end turn |
+| Esc | Cancel: press No / Close on a confirm dialog, else hide the mod's panels |
+| ↑ ↓ ← → | Navigate a choice list; ← → also page cards |
+| Tab | Toggle the live scoreboard |
+| 1–5 | Focus a player's board (1 = you, then the others) |
+
+**Hold Cmd/Ctrl** (badges and letter-hints appear on screen while held):
+
+| Key | Action |
+|-----|--------|
+| `1` `2` `3` `4` `Q` `W` `E` `R` | Play / use the 1st–8th on-screen card, action, or standard project / milestone / award (page for more) |
+| `5`–`9` | Select the hand's sort/filter tabs (Cost, Playability, Card Type, Tags, Chronological) |
+| C | Projects (hand) |
 | A | Actions |
 | R | Resources |
 | V | Victory points |
 | E | Effects |
+| T | Tags |
 | M | Milestones tab |
 | K | Standard Projects tab |
 | W | Awards tab |
-| G | Convert plants → greenery |
-| T | Convert heat → temperature |
 | S | Sell cards (opens Sell Patents; Space confirms) |
 | B | View state (inspect board) / Return |
-| Space | Confirm the default button of the open dialog / focused card |
-| ↑ / ↓ | Navigate a choice list |
-| 1–4 | Focus a player's board (1 = you, then the others) |
 | H | Toggle the on-screen shortcut overlay |
+| G | Convert plants → greenery |
+| F | Convert heat → temperature |
 
-Conversions (`G`/`T`) only fire when you can actually convert (enough resources,
-your turn). Tags no longer has a key (`T` is now temperature).
+The card keys map left-to-right to the cards in view: the number row for the
+first four, the `Q W E R` row for the next four (closer than reaching for `5`–`8`).
+Where a key names both a card slot and a panel (W/E/R), the card wins while cards
+are on screen; otherwise it opens the panel. Conversions only fire when you can
+actually convert (enough resources, your turn).
 
-Hold **Cmd/Ctrl** to reveal the keys on screen: number badges appear on the
-selectable cards/actions, and the Milestones / Standard Projects / Awards tabs
-show their letter. Release the modifier and press the bare key to use it.
+### Live scoreboard (`Tab`)
+
+Press `Tab` to toggle a panel in the top-right showing every player's current
+victory points, split into the same columns as the game's end screen: Terraforming
+Rating, Awards, Milestones, Greenery, City, Card VP, and Total. Your row is marked
+with `▸` and rows are sorted by total. Awards and milestone leads reflect current
+standings (what you'd score *if the game ended now*), so they shift as the board
+changes. It only reads game state, computing the same numbers the game does, so it
+never affects play or unlocks achievements.
 
 ## Config (toggle features / rebind keys)
 

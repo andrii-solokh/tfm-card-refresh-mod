@@ -1,12 +1,13 @@
-# Terraforming Mars: skip the turn animations (macOS + Windows)
+# Terraforming Mars: Mission Control (macOS + Windows)
 
 A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds quality-of-life
-fixes and keyboard shortcuts to the Asmodee **Terraforming Mars** digital client
-on macOS and Windows.
+fixes, full keyboard control, and a few power-user tools to the Asmodee
+**Terraforming Mars** digital client on macOS and Windows.
 
-**Main thing it does: your turn starts instantly.** No more waiting on the
-turn-pass animation and banner before you can play. A short sound still pings so
-you know it's your turn.
+**Headline: your turn starts instantly.** No more waiting on the turn-pass
+animation and banner before you can play (a short sound still pings so you know
+it's your turn). On top of that: drive the whole game from the keyboard, a live
+scoreboard, a prepare-and-auto-play queue, and fixes for playing against bots.
 
 ![Turn starts instantly with the mod](docs/demo.gif)
 
@@ -25,7 +26,7 @@ client honest and quicker to drive.
 You need the game installed through **Steam** first. Then:
 
 1. **Download the mod.** Get the ZIP from the
-   [latest release](https://github.com/andrii-solokh/terraforming-mars-skip-animations/releases/latest)
+   [latest release](https://github.com/andrii-solokh/terraforming-mars-mission-control/releases/latest)
    (under **Assets**).
 2. **Unzip it** (double-click the downloaded file).
 3. **Double-click the installer** for your computer, inside the unzipped folder:
@@ -103,8 +104,8 @@ game folder (or delete `BepInEx\`).
 `BepInEx/LogOutput.log` in the game folder should end with:
 
 ```
-Loading [TFM Card Playability Refresh 1.0.0]
-TFM Card Playability Refresh 1.0.0 loaded.
+Loading [Terraforming Mars: Mission Control 1.5.5]
+Terraforming Mars: Mission Control 1.5.5 loaded.
 Harmony patches applied ...
 Chainloader startup complete
 ```

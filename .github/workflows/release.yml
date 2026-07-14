@@ -36,7 +36,7 @@ jobs:
 
       - name: Package release ZIP
         run: |
-          name="terraforming-mars-skip-animations"
+          name="terraforming-mars-mission-control"
           zipname="${name}-${GITHUB_REF_NAME}.zip"
           mkdir -p "$name/docs"
           cp setup.sh run_bepinex.sh.working \

@@ -34,9 +34,11 @@ namespace TfmCardRefresh
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
     public class TfmCardRefreshPlugin : BaseUnityPlugin
     {
+        // GUID kept stable across the rename (it keys the BepInEx config file, so
+        // changing it would orphan everyone's saved settings).
         public const string PluginGuid = "com.experiment.tfm.cardrefresh";
-        public const string PluginName = "TFM Card Playability Refresh";
-        public const string PluginVersion = "1.5.4";
+        public const string PluginName = "Terraforming Mars: Mission Control";
+        public const string PluginVersion = "1.5.5";
 
         private const float PollIntervalSeconds = 0.25f;
 
@@ -256,7 +258,7 @@ namespace TfmCardRefresh
             float height = 34f + lines * 20f;
             GUILayout.BeginArea(new Rect(12f, 12f, 360f, height), GUI.skin.box);
             string peek = Key(KeyPeek, KeyCode.LeftAlt).ToString();
-            GUILayout.Label("<b>TFM mod shortcuts</b>   (" + Key(KeyOverlay, KeyCode.H) + " to hide)");
+            GUILayout.Label("<b>Mission Control — shortcuts</b>   (" + Key(KeyOverlay, KeyCode.H) + " to hide)");
             GUILayout.Label("  " + "Space".PadRight(12) + "Confirm (dialog / card)");
             GUILayout.Label("  " + "Esc".PadRight(12) + "Cancel / No / close window");
             GUILayout.Label("  " + Key(KeyPrepareSkip, KeyCode.Z).ToString().PadRight(12) + "Skip / pass turn");
@@ -298,7 +300,7 @@ namespace TfmCardRefresh
                 };
                 s_indicatorStyle.normal.textColor = new Color(0.10f, 0.95f, 0.62f, 0.65f);
             }
-            GUI.Label(new Rect(10f, Screen.height - 26f, 340f, 20f), "TFM mod v" + PluginVersion + " active", s_indicatorStyle);
+            GUI.Label(new Rect(10f, Screen.height - 26f, 340f, 20f), "Mission Control v" + PluginVersion + " active", s_indicatorStyle);
         }
 
         private void DrawNumberBadges()

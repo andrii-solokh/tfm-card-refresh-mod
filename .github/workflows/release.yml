@@ -1,0 +1,55 @@
+name: Release
+
+# Publishes a GitHub release whenever you push a version tag (e.g. v1.5.5).
+#
+# The mod cannot be compiled here: it references the game's proprietary DLLs from a
+# local Steam install, which can't live in a public repo and can't be installed on a
+# runner. So the DLL is built locally (bash build.sh) and committed as the tracked
+# root TfmCardRefresh.dll; this workflow just packages it into the release ZIP and
+# publishes it. A guard fails the run if the committed DLL doesn't match the tag, so a
+# stale binary can't ship.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify the committed DLL matches the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! grep -aqF "$version" TfmCardRefresh.dll; then
+            echo "::error::TfmCardRefresh.dll does not contain version $version." \
+                 "Run 'bash build.sh', copy bin/Release/TfmCardRefresh.dll to the repo root," \
+                 "commit it, then re-tag."
+            exit 1
+          fi
+
+      - name: Package release ZIP
+        run: |
+          name="terraforming-mars-skip-animations"
+          zipname="${name}-${GITHUB_REF_NAME}.zip"
+          mkdir -p "$name/docs"
+          cp setup.sh run_bepinex.sh.working \
+             "Install (macOS).command" "Install (Windows).bat" \
+             install-windows.ps1 "Launch TFM (modded).command" \
+             README.md TfmCardRefresh.dll "$name/"
+          cp docs/demo.gif "$name/docs/"
+          zip -rq "$zipname" "$name"
+          echo "ZIPNAME=$zipname" >> "$GITHUB_ENV"
+
+      - name: Create / update the release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ github.ref_name }}"
+          generate_release_notes: true
+          files: ${{ env.ZIPNAME }}

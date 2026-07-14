@@ -36,13 +36,12 @@ namespace TfmCardRefresh
     {
         public const string PluginGuid = "com.experiment.tfm.cardrefresh";
         public const string PluginName = "TFM Card Playability Refresh";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.5.4";
 
         private const float PollIntervalSeconds = 0.25f;
 
         private float _elapsed;
         private float _targetsElapsed;
-        private bool _modifierWasHeld;
         private EPage _lastBadgePage = (EPage)(-1);
         private KeyCode _repeatKey = KeyCode.None;
         private float _repeatTimer;
@@ -55,16 +54,64 @@ namespace TfmCardRefresh
         private bool _showOverlay;
         private bool _showScoreboard;
 
+        // Prepared-action queue: atomic actions the player lines up ahead of time; the
+        // mod auto-fires them (in order, as far as actions/resources allow) the moment
+        // it becomes their action turn. Always available; inert while the queue is empty.
+        // Items are added from the fixed panel list (below) or from the on-screen element
+        // itself with the add-key (standard projects / milestones / awards).
+        private enum PreparedKind { Action, Conversion, Card, CardAction, Pass }
+        private struct PreparedItem
+        {
+            public PreparedKind kind;
+            public EActionType actionType; // Action: StandardProject / Milestone / Award
+            public int arg;                // Action: (int) element type; Card: card id
+            public EResourceType res;      // Conversion
+            public string label;
+
+            public bool IsPass { get { return kind == PreparedKind.Pass; } }
+            public bool Same(PreparedItem o)
+            {
+                return kind == o.kind && actionType == o.actionType && arg == o.arg && res == o.res;
+            }
+            public static PreparedItem MakeAction(EActionType t, int a, string lbl)
+            {
+                return new PreparedItem { kind = PreparedKind.Action, actionType = t, arg = a, label = lbl };
+            }
+            public static PreparedItem MakeConversion(EResourceType r, string lbl)
+            {
+                return new PreparedItem { kind = PreparedKind.Conversion, res = r, label = lbl };
+            }
+            public static PreparedItem MakeCard(int cardId, string lbl)
+            {
+                return new PreparedItem { kind = PreparedKind.Card, arg = cardId, label = lbl };
+            }
+            public static PreparedItem MakeCardAction(int cardId, string lbl)
+            {
+                return new PreparedItem { kind = PreparedKind.CardAction, arg = cardId, label = lbl };
+            }
+            public static PreparedItem MakePass()
+            {
+                return new PreparedItem { kind = PreparedKind.Pass, label = "Pass / skip turn  (always last)" };
+            }
+        }
+        private readonly List<PreparedItem> _prepareQueue = new List<PreparedItem>();
+        private bool _showPrepare;
+        private bool _fireAwaitConfirm;
+        private float _fireCooldown;
+        private float _fireConfirmElapsed;
+        private float _cardNavElapsed;
+
         // ---- Config: rebindable keys (edit BepInEx/config/<guid>.cfg) ----
         internal static ConfigEntry<KeyCode> KeyProjects, KeyActions, KeyResources, KeyVictoryPoints,
             KeyEffects, KeyTags, KeyGreenery, KeyTemperature, KeySell, KeyBoard, KeyConfirm,
             KeyNavUp, KeyNavDown, KeyNavLeft, KeyNavRight, KeyOverlay,
-            KeyMilestones, KeyStandardProjects, KeyAwards, KeyScoreboard;
+            KeyMilestones, KeyStandardProjects, KeyAwards, KeyScoreboard, KeyPeek, KeyPrepare, KeyPrepareAdd,
+            KeyPrepareSkip;
 
         // ---- Config: feature toggles ----
         internal static ConfigEntry<bool> FeatCardRefresh, FeatHandReadable, FeatAutoOpenHand, FeatKeepHandOpen,
             FeatSuppressAnnouncements, FeatPlayabilityDim, FeatActionAvailability, FeatActionSort, FeatHotkeys,
-            FeatAutoMaxPayment, FeatIndicator, FeatTurnSound, FeatScoreboard;
+            FeatAutoMaxPayment, FeatIndicator, FeatTurnSound, FeatScoreboard, FeatStayFocused;
 
         // The sound played when your action turn begins (a game SFX id).
         internal static ConfigEntry<string> TurnStartSound;
@@ -81,14 +128,14 @@ namespace TfmCardRefresh
 
         private void BindConfig()
         {
-            KeyProjects = Config.Bind("Keys", "Projects", KeyCode.C, "Open/close your hand (projects) (hold Cmd/Ctrl)");
+            KeyProjects = Config.Bind("Keys", "Projects", KeyCode.P, "Open/close your hand (projects)");
             KeyActions = Config.Bind("Keys", "Actions", KeyCode.A, "Open the card Actions popup");
             KeyResources = Config.Bind("Keys", "Resources", KeyCode.R, "Open the Card Resources popup");
             KeyVictoryPoints = Config.Bind("Keys", "VictoryPoints", KeyCode.V, "Open the Victory Points popup");
             KeyEffects = Config.Bind("Keys", "Effects", KeyCode.E, "Open the Effects popup");
             KeyTags = Config.Bind("Keys", "Tags", KeyCode.T, "Open the Card Tags popup");
-            KeyGreenery = Config.Bind("Keys", "ConvertGreenery", KeyCode.G, "Convert plants to a greenery (hold Cmd/Ctrl)");
-            KeyTemperature = Config.Bind("Keys", "ConvertTemperature", KeyCode.F, "Convert heat to raise temperature (hold Cmd/Ctrl)");
+            KeyGreenery = Config.Bind("Keys", "ConvertGreenery", KeyCode.G, "Convert plants to a greenery");
+            KeyTemperature = Config.Bind("Keys", "ConvertTemperature", KeyCode.F, "Convert heat to raise temperature");
             KeySell = Config.Bind("Keys", "Sell", KeyCode.S, "Sell cards (Sell Patents)");
             KeyBoard = Config.Bind("Keys", "BoardView", KeyCode.B, "Toggle View state / Return (inspect board)");
             KeyConfirm = Config.Bind("Keys", "Confirm", KeyCode.Space, "Confirm the default button of the open dialog/card");
@@ -101,6 +148,10 @@ namespace TfmCardRefresh
             KeyStandardProjects = Config.Bind("Keys", "StandardProjects", KeyCode.K, "Open/close the Standard Projects tab");
             KeyAwards = Config.Bind("Keys", "Awards", KeyCode.W, "Open/close the Awards tab");
             KeyScoreboard = Config.Bind("Keys", "Scoreboard", KeyCode.Tab, "Toggle the live scoreboard (current VP from all sources)");
+            KeyPeek = Config.Bind("Keys", "Highlight", KeyCode.LeftAlt, "Hold to reveal the badges/hints AND play the highlighted card/row (Alt+1-4/Q W E R). Left or Right variant both work; try LeftControl if you prefer");
+            KeyPrepare = Config.Bind("Keys", "Prepare", KeyCode.Q, "Open/close the Prepare queue panel; while open, 1-9 add a fixed action, Backspace undo, Delete clear");
+            KeyPrepareAdd = Config.Bind("Keys", "PrepareAdd", KeyCode.LeftShift, "Hold + a badge to ADD that standard project / milestone / award to the Prepare queue instead of doing it now (Left or Right Shift)");
+            KeyPrepareSkip = Config.Bind("Keys", "PrepareSkip", KeyCode.Z, "Toggle Pass / skip in the Prepare queue (always fires last)");
 
             FeatHotkeys = Config.Bind("Features", "Hotkeys", true, "Master switch for all keyboard shortcuts");
             FeatCardRefresh = Config.Bind("Features", "CardRefresh", true, "Re-check card playability when game state changes");
@@ -115,6 +166,7 @@ namespace TfmCardRefresh
             FeatIndicator = Config.Bind("Features", "ShowRunningIndicator", true, "Show a small always-on 'mod running' marker in the corner");
             FeatTurnSound = Config.Bind("Features", "PlayTurnStartSound", true, "Play a sound when your action turn begins (announcements stay hidden)");
             FeatScoreboard = Config.Bind("Features", "Scoreboard", true, "Enable the live scoreboard panel (current VP breakdown for all players)");
+            FeatStayFocused = Config.Bind("Features", "StayFocusedOnMyBoard", true, "Offline (vs bots): keep the view on your own board instead of following each bot's turn");
             TurnStartSound = Config.Bind("Features", "TurnStartSound", "SFX_OTHER_PLAYER_TURN", "Sound id for the turn-start ping (e.g. SFX_OTHER_PLAYER_TURN, SFX_MENU_CONFIRM, SFX_POPUP_OPEN)");
         }
 
@@ -137,8 +189,9 @@ namespace TfmCardRefresh
         private static GUIStyle s_numberStyle;
         private static GUIStyle s_indicatorStyle;
         private static GUIStyle s_keyHintStyle;
+        private static GUIStyle s_prepareStyle;
 
-        // Chip backing for the Cmd/Ctrl badges/hints: a dark translucent fill with a
+        // Chip backing for the badges/hints: a dark translucent fill with a
         // mint border, so the letters read against busy card art.
         private static Texture2D s_chipFill;
         private static Texture2D s_chipBorder;
@@ -174,15 +227,17 @@ namespace TfmCardRefresh
             DrawNumberBadges();
             DrawKeyHints();
             DrawScoreboard();
+            DrawPreparePanel();
 
             if (!_showOverlay)
             {
                 return;
             }
-            // Everything below is a Cmd/Ctrl combo; the bare keys are listed separately.
-            (ConfigEntry<KeyCode> key, KeyCode fallback, string label)[] modRows =
+            // Panels/actions are bare keys; hold the highlight key (Alt) to reveal the
+            // badges and play the highlighted card/row.
+            (ConfigEntry<KeyCode> key, KeyCode fallback, string label)[] rows =
             {
-                (KeyProjects, KeyCode.C, "Projects (hand)"),
+                (KeyProjects, KeyCode.P, "Projects (hand)"),
                 (KeyActions, KeyCode.A, "Actions"),
                 (KeyResources, KeyCode.R, "Resources"),
                 (KeyVictoryPoints, KeyCode.V, "Victory points"),
@@ -197,20 +252,22 @@ namespace TfmCardRefresh
                 (KeyGreenery, KeyCode.G, "Plants → greenery"),
                 (KeyTemperature, KeyCode.F, "Heat → temperature"),
             };
-            int lines = 8 + 2 + modRows.Length; // headers + bare rows + target rows + mod rows
+            int lines = 11 + rows.Length; // title + fixed rows + per-key rows
             float height = 34f + lines * 20f;
-            GUILayout.BeginArea(new Rect(12f, 12f, 340f, height), GUI.skin.box);
-            GUILayout.Label("<b>TFM mod shortcuts</b>   (Cmd/Ctrl+" + Key(KeyOverlay, KeyCode.H) + " to hide)");
-            GUILayout.Label("  <b>Bare</b>");
-            GUILayout.Label("  " + "Space".PadRight(12) + "Confirm / pass");
-            GUILayout.Label("  " + "Esc".PadRight(12) + "Cancel / No");
+            GUILayout.BeginArea(new Rect(12f, 12f, 360f, height), GUI.skin.box);
+            string peek = Key(KeyPeek, KeyCode.LeftAlt).ToString();
+            GUILayout.Label("<b>TFM mod shortcuts</b>   (" + Key(KeyOverlay, KeyCode.H) + " to hide)");
+            GUILayout.Label("  " + "Space".PadRight(12) + "Confirm (dialog / card)");
+            GUILayout.Label("  " + "Esc".PadRight(12) + "Cancel / No / close window");
+            GUILayout.Label("  " + Key(KeyPrepareSkip, KeyCode.Z).ToString().PadRight(12) + "Skip / pass turn");
             GUILayout.Label("  " + "↑ / ↓ / ← / →".PadRight(12) + "Navigate a list / pages");
             GUILayout.Label("  " + Key(KeyScoreboard, KeyCode.Tab).ToString().PadRight(12) + "Scoreboard");
             GUILayout.Label("  " + "1-5".PadRight(12) + "Focus player (1 = you)");
-            GUILayout.Label("  <b>Hold Cmd/Ctrl</b>");
-            GUILayout.Label("  " + "1-4 Q W E R".PadRight(12) + "Play / use on-screen item");
-            GUILayout.Label("  " + "5-9".PadRight(12) + "Sort tabs (in hand)");
-            foreach ((ConfigEntry<KeyCode> key, KeyCode fallback, string label) in modRows)
+            GUILayout.Label("  " + Key(KeyPrepare, KeyCode.Q).ToString().PadRight(12) + "Prepare queue (auto-plays at your turn)");
+            GUILayout.Label("  <b>hold " + peek + " (highlight) then:</b>");
+            GUILayout.Label("  " + (peek + "+1-4 Q W E R").PadRight(16) + "Play / use item");
+            GUILayout.Label("  " + (peek + "+5-9").PadRight(16) + "Sort tabs (in hand)");
+            foreach ((ConfigEntry<KeyCode> key, KeyCode fallback, string label) in rows)
             {
                 GUILayout.Label("  " + Key(key, fallback).ToString().PadRight(12) + label);
             }
@@ -218,7 +275,7 @@ namespace TfmCardRefresh
         }
 
         // Draw a big white number at the LEFT edge of each current clickable item,
-        // but only while Cmd/Ctrl is held (the key that also activates them). Uses
+        // but only while the highlight key is held (badges are display-only now). Uses
         // the item's world corners so it works regardless of pivot; Y is flipped for
         // IMGUI's top-left origin (screen-space-overlay canvas).
         private static readonly Vector3[] s_corners = new Vector3[4];
@@ -246,7 +303,7 @@ namespace TfmCardRefresh
 
         private void DrawNumberBadges()
         {
-            if ((_targets.Count == 0 && _sortTargets.Count == 0) || !ModifierHeld())
+            if ((_targets.Count == 0 && _sortTargets.Count == 0) || (!PeekHeld() && !AddHeld()))
             {
                 return;
             }
@@ -260,7 +317,7 @@ namespace TfmCardRefresh
                 };
                 s_numberStyle.normal.textColor = Color.white;
             }
-            for (int i = 0; i < _targets.Count && i < s_targetKeys.Length; i++)
+            for (int i = 0; i < _targets.Count; i++)
             {
                 RectTransform rt = _targets[i].t as RectTransform;
                 if (rt == null)
@@ -274,7 +331,7 @@ namespace TfmCardRefresh
                 float centerY = (s_corners[0].y + s_corners[1].y) * 0.5f;
                 Rect chip = new Rect(leftX, (Screen.height - centerY) - 34f, 38f, 38f);
                 DrawChip(chip);
-                GUI.Label(chip, s_targetKeyLabels[i], s_numberStyle);
+                GUI.Label(chip, _targets[i].label, s_numberStyle);
             }
             // Sort/filter tabs (5-9): centre a badge over each horizontal tab.
             for (int i = 0; i < _sortTargets.Count && i < s_sortKeys.Length; i++)
@@ -293,12 +350,12 @@ namespace TfmCardRefresh
             }
         }
 
-        // Draw the key letter centred over each hinted button while Cmd/Ctrl is held,
+        // Draw the key letter centred over each hinted button while the highlight key is held,
         // so the panel shortcuts (Milestones / Standard Projects / Awards) are
         // discoverable without memorising them.
         private void DrawKeyHints()
         {
-            if (_keyHints.Count == 0 || !ModifierHeld())
+            if (_keyHints.Count == 0 || (!PeekHeld() && !AddHeld()))
             {
                 return;
             }
@@ -424,7 +481,7 @@ namespace TfmCardRefresh
                 }
                 TM_GameBoardData board = data.BoardData;
                 bool solo = info.IsSoloModeGame();
-                int myId = info.GetMyPlayerLocalId();
+                int myId = MyStableLocalId();
                 List<int> playerIds = new List<int>(data.PlayerBoardData.Keys);
                 Dictionary<int, int> awardTotals = solo ? null : ComputeAwardScores(game, data, playerIds);
 
@@ -609,42 +666,28 @@ namespace TfmCardRefresh
 
         private void Update()
         {
-            // Only scan for numbered items while Cmd/Ctrl is held (the only time the
-            // badges show and number-select is used). FindObjectsByType scans the
-            // whole scene, so the badge layout is scanned only when it can have
-            // changed: the first held frame, a top-page change, or a slow safety
-            // re-scan. Scanning every frame lagged the game.
-            if (ModifierHeld())
+            if (UserClosingPanelFrames > 0)
             {
-                _targetsElapsed += Time.unscaledDeltaTime;
-                EPage top = TopPage();
-                if (!_modifierWasHeld || top != _lastBadgePage || _targetsElapsed >= 0.5f)
-                {
-                    _targetsElapsed = 0f;
-                    _lastBadgePage = top;
-                    RefreshNumberedTargets();
-                    RefreshKeyHints();
-                }
-                _modifierWasHeld = true;
+                UserClosingPanelFrames--;
             }
-            else
+            // Keep the numbered/sort targets current so their bare keys (1-4 / Q W E R,
+            // 5-9) can activate them without a modifier held. FindObjectsByType scans
+            // the whole scene, so it runs only on a top-page change or a twice-a-second
+            // safety re-scan; RefreshNumberedTargets itself does nothing but a few cheap
+            // page lookups when no selectable page is open, so the idle cost is nil.
+            _targetsElapsed += Time.unscaledDeltaTime;
+            EPage topPage = TopPage();
+            if (topPage != _lastBadgePage || _targetsElapsed >= 0.5f)
             {
-                _modifierWasHeld = false;
-                if (_targets.Count > 0)
-                {
-                    _targets.Clear();
-                }
-                if (_sortTargets.Count > 0)
-                {
-                    _sortTargets.Clear();
-                }
-                if (_keyHints.Count > 0)
-                {
-                    _keyHints.Clear();
-                }
+                _targetsElapsed = 0f;
+                _lastBadgePage = topPage;
+                RefreshNumberedTargets();
+                RefreshKeyHints();
             }
             HandleSpaceToConfirm();
             HandleHotkeys();
+            FirePreparedActions();
+            KeepMyBoardFocused();
 
             _elapsed += Time.unscaledDeltaTime;
             if (_elapsed < PollIntervalSeconds)
@@ -740,7 +783,7 @@ namespace TfmCardRefresh
                 {
                     return;
                 }
-                bool isMyTurn = info.CurrentPlayerLocalId == info.GetMyPlayerLocalId();
+                bool isMyTurn = info.CurrentPlayerLocalId == MyStableLocalId(Singleton<GameManager>.Instance.Game, info);
                 if (_prevIsMyTurn && !isMyTurn)
                 {
                     _reopenHandAfterPass = true;
@@ -802,8 +845,14 @@ namespace TfmCardRefresh
 
         private void HandleHotkeys()
         {
-            // Overlay help: Cmd/Ctrl+H, works regardless of the master switch or focus.
-            if (ModifierHeld() && Input.GetKeyDown(Key(KeyOverlay, KeyCode.H)))
+            // All shortcuts are bare keys, so any of them can land in the chat / search
+            // field. Suppress them while a text field is focused, except when a mod-
+            // driven dialog is open (the game auto-focuses chat after a keyboard confirm,
+            // so Space / arrows / Esc must keep working there).
+            bool typing = IsTextInputFocused() && !ModDialogOpen();
+            // Overlay help toggle works even when the master switch is off (but not while
+            // typing), so you can always bring up the shortcut list.
+            if (!typing && Input.GetKeyDown(Key(KeyOverlay, KeyCode.H)))
             {
                 _showOverlay = !_showOverlay;
                 return;
@@ -812,112 +861,42 @@ namespace TfmCardRefresh
             {
                 return;
             }
-            // ESC cancels: press NO / Close on an open confirm dialog, else dismiss the
-            // mod's own panels. Handled first, before any focus guard.
+            // Esc cancels: press No / Close on an open confirm dialog, else dismiss the
+            // mod's own panels. Before the typing guard: Esc is never text input.
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 HandleEscape();
                 return;
             }
-            // Every action lives on the Cmd/Ctrl layer now (no bare letters), so a
-            // modifier combo is never chat input and is handled before the text guard.
-            if (ModifierHeld())
+            if (typing)
             {
-                // Numbered card/action items own the shared keys (W/E/R also name card
-                // slots 6-8): only consume the key when a target fills that slot, else
-                // fall through to the panel bound to the same letter.
-                for (int i = 0; i < s_targetKeys.Length; i++)
+                return;
+            }
+            // Prepare queue: bare Q toggles the panel; while it is open the number keys
+            // toggle an action in/out and Backspace clears (handled here so they don't
+            // fall through to focus-player / card keys). Gated on !PeekHeld so Alt+Q
+            // still plays card slot 5.
+            if (!PeekHeld() && !AddHeld() && Input.GetKeyDown(Key(KeyPrepare, KeyCode.Q)))
+            {
+                _showPrepare = !_showPrepare;
+                return;
+            }
+            // Z toggles Pass/skip in the queue (fires last), from anywhere.
+            if (!PeekHeld() && !AddHeld() && Input.GetKeyDown(Key(KeyPrepareSkip, KeyCode.Z)))
+            {
+                int at = _prepareQueue.FindIndex(x => x.IsPass);
+                if (at >= 0)
                 {
-                    if ((Input.GetKeyDown(s_targetKeys[i]) || (i < 4 && Input.GetKeyDown(KeyCode.Keypad1 + i)))
-                        && i < _targets.Count)
-                    {
-                        ActivateNumberedTarget(i);
-                        return;
-                    }
+                    _prepareQueue.RemoveAt(at);
                 }
-                // Secondary group: the hand's sort/filter tabs, badged 5-9.
-                for (int i = 0; i < s_sortKeys.Length; i++)
+                else
                 {
-                    if ((Input.GetKeyDown(s_sortKeys[i]) || Input.GetKeyDown(KeyCode.Keypad5 + i))
-                        && i < _sortTargets.Count)
-                    {
-                        ActivateSortTarget(i);
-                        return;
-                    }
-                }
-                // Conversions.
-                if (Input.GetKeyDown(Key(KeyGreenery, KeyCode.G)))
-                {
-                    Convert(EResourceType.Plant);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyTemperature, KeyCode.F)))
-                {
-                    Convert(EResourceType.Heat);
-                    return;
-                }
-                // Panels / actions.
-                if (Input.GetKeyDown(Key(KeyProjects, KeyCode.C)))
-                {
-                    ToggleHand();
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyActions, KeyCode.A)))
-                {
-                    TryTogglePopup(EPage.CardActionsPopup);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyResources, KeyCode.R)))
-                {
-                    TryTogglePopup(EPage.CardResourcesPopup);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyVictoryPoints, KeyCode.V)))
-                {
-                    TryTogglePopup(EPage.CardVictoryPointsPopup);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyEffects, KeyCode.E)))
-                {
-                    TryTogglePopup(EPage.CardEffectsPopup);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyTags, KeyCode.T)))
-                {
-                    TryTogglePopup(EPage.CardTagsPopup);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyMilestones, KeyCode.M)))
-                {
-                    ToggleActionTab(EActionType.Milestone);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyStandardProjects, KeyCode.K)))
-                {
-                    ToggleActionTab(EActionType.StandardProject);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyAwards, KeyCode.W)))
-                {
-                    ToggleActionTab(EActionType.Award);
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeySell, KeyCode.S)))
-                {
-                    SellFromHand();
-                    return;
-                }
-                if (Input.GetKeyDown(Key(KeyBoard, KeyCode.B)))
-                {
-                    ToggleBoardView();
-                    return;
+                    _prepareQueue.Add(PreparedItem.MakePass());
+                    _showPrepare = true;
                 }
                 return;
             }
-            // Bare keys below (Tab / arrows / focus-player numbers) can land in a text
-            // field, so suppress them while one is focused, except when a mod-driven
-            // dialog is open (the game auto-focuses chat after a keyboard confirm).
-            if (IsTextInputFocused() && !ModDialogOpen())
+            if (_showPrepare && !PeekHeld() && !AddHeld() && HandlePreparePanelInput())
             {
                 return;
             }
@@ -947,12 +926,144 @@ namespace TfmCardRefresh
                 NavigateHorizontal(right: true);
                 return;
             }
-            // Bare 1-5 (kept as an exception) focus a player's board.
+            // Play / use the highlighted item: only while the Alt (highlight) layer is
+            // held, so the bare letters below stay free for the panels (E/R/W) even when
+            // cards fill those slots. A key that no target fills falls through to its
+            // panel / focus-player binding, so Alt+E with no 7th card still opens Effects.
+            // Cache mode: on opponents' turns a badge press queues the item (prepare
+            // during downtime); on your own turn it plays/activates normally so you keep
+            // full control of resource choices. Hold the add-key to force-cache on your
+            // turn. Never cache in a selection / choice / play-view context (buy, sell,
+            // steal, resource pick, card choice, carousel) - there a badge must select.
+            bool addMode = (AddHeld() || !IsMyActionTurn()) && !IsSelectionContext();
+            if (PeekHeld() || AddHeld())
+            {
+                // Cards / actions / standard-project / milestone / award rows. Each target
+                // carries its own key (a grid maps row 1 to 1-4, row 2 to Q W E R). In
+                // cache mode a queueable target goes to the Prepare queue instead of
+                // being played now.
+                for (int i = 0; i < _targets.Count; i++)
+                {
+                    if (TargetKeyDown(_targets[i].key))
+                    {
+                        if (addMode)
+                        {
+                            PreparedItem? d = DescribeTarget(_targets[i].t);
+                            if (d.HasValue)
+                            {
+                                EnqueuePrepared(d.Value);
+                                _showPrepare = true; // surface the panel so the add is visible
+                                Logger.LogInfo("Prepare: queued " + d.Value.label + " (from source)");
+                            }
+                            return;
+                        }
+                        ActivateNumberedTarget(i);
+                        return;
+                    }
+                }
+                // Secondary group: the hand's sort/filter tabs, badged 5-9 (not queueable).
+                if (!addMode)
+                {
+                    for (int i = 0; i < s_sortKeys.Length; i++)
+                    {
+                        if ((Input.GetKeyDown(s_sortKeys[i]) || Input.GetKeyDown(KeyCode.Keypad5 + i))
+                            && i < _sortTargets.Count)
+                        {
+                            ActivateSortTarget(i);
+                            return;
+                        }
+                    }
+                }
+            }
+            // Conversions (cache them too while in cache mode).
+            if (Input.GetKeyDown(Key(KeyGreenery, KeyCode.G)))
+            {
+                if (addMode)
+                {
+                    EnqueuePrepared(PreparedItem.MakeConversion(EResourceType.Plant, "Greenery (place)"));
+                    _showPrepare = true;
+                }
+                else
+                {
+                    Convert(EResourceType.Plant);
+                }
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyTemperature, KeyCode.F)))
+            {
+                if (addMode)
+                {
+                    EnqueuePrepared(PreparedItem.MakeConversion(EResourceType.Heat, "Heat → Temperature"));
+                    _showPrepare = true;
+                }
+                else
+                {
+                    Convert(EResourceType.Heat);
+                }
+                return;
+            }
+            // Panels / actions.
+            if (Input.GetKeyDown(Key(KeyProjects, KeyCode.P)))
+            {
+                ToggleHand();
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyActions, KeyCode.A)))
+            {
+                TryTogglePopup(EPage.CardActionsPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyResources, KeyCode.R)))
+            {
+                TryTogglePopup(EPage.CardResourcesPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyVictoryPoints, KeyCode.V)))
+            {
+                TryTogglePopup(EPage.CardVictoryPointsPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyEffects, KeyCode.E)))
+            {
+                TryTogglePopup(EPage.CardEffectsPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyTags, KeyCode.T)))
+            {
+                TryTogglePopup(EPage.CardTagsPopup);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyMilestones, KeyCode.M)))
+            {
+                ToggleActionTab(EActionType.Milestone);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyStandardProjects, KeyCode.K)))
+            {
+                ToggleActionTab(EActionType.StandardProject);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyAwards, KeyCode.W)))
+            {
+                ToggleActionTab(EActionType.Award);
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeySell, KeyCode.S)))
+            {
+                SellFromHand();
+                return;
+            }
+            if (Input.GetKeyDown(Key(KeyBoard, KeyCode.B)))
+            {
+                ToggleBoardView();
+                return;
+            }
+            // Bare 1-5 focus a player's board when no numbered target claimed the key.
             for (int n = 0; n < 5; n++)
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1 + n) || Input.GetKeyDown(KeyCode.Keypad1 + n))
                 {
-                    FocusPlayer(n); // Cmd/Ctrl+number is handled above
+                    FocusPlayer(n);
                     return;
                 }
             }
@@ -1038,7 +1149,7 @@ namespace TfmCardRefresh
                 {
                     return;
                 }
-                int myId = game.GameInfo.GetMyPlayerLocalId();
+                int myId = MyStableLocalId(game, game.GameInfo);
                 TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(myId);
                 if (board == null || board.HandCards == null || board.HandCards.Count == 0)
                 {
@@ -1079,7 +1190,7 @@ namespace TfmCardRefresh
                 // Open MY actions explicitly. ShowPopup binds to whichever player the
                 // HUD is currently showing, which after viewing an opponent would open
                 // the opponent's actions.
-                int myId = game.GameInfo.GetMyPlayerLocalId();
+                int myId = MyStableLocalId(game, game.GameInfo);
                 UIManager.Instance.Push(EPage.CardActionsPopup, keepPreviousPagesVisible: true, IntValuePageParameters.Create(myId));
             }
             catch (System.Exception)
@@ -1119,14 +1230,36 @@ namespace TfmCardRefresh
         // pops are allowed through while automatic ones are suppressed.
         internal static bool UserClosingHand;
 
-        // Suppress the game's automatic close of the read-only hand while it is not
-        // your turn, so it stays open (no close-then-reopen flicker) after you pass.
-        // Your own closes (the page's close/back buttons, or the P hotkey) are still
-        // allowed via UserClosingHand, and your-turn closes (needed for tile
-        // placement, etc.) are never suppressed.
+        // Frames remaining in which a user-initiated popup close is allowed through the
+        // suppression below. Set by the mod's own close paths (toggle keys, Esc) and
+        // counted down in Update; covers the async close-animation callback.
+        internal static int UserClosingPanelFrames;
+
+        // Tray popups (besides the hand) kept open during opponents' turns so you can
+        // browse / prepare without them snapping shut when an opponent acts.
+        private static readonly EPage[] s_keepOpenOffTurn =
+        {
+            EPage.ViewPlayerCardsPage, EPage.CardActionsPopup, EPage.CardResourcesPopup,
+            EPage.CardVictoryPointsPopup, EPage.CardEffectsPopup, EPage.CardTagsPopup,
+        };
+
+        // Suppress the game's automatic close of the hand / tray popups while it is not
+        // your turn, so they stay open (no close-then-reopen flicker, no snapping shut
+        // when an opponent's action resolves). Your own closes are allowed via the
+        // UserClosingHand flag (hand) or the UserClosingPanelFrames grace window (other
+        // popups); your-turn closes (needed for tile placement, etc.) are never touched.
         internal static bool ShouldSuppressHandClose(EPage page)
         {
-            if (page != EPage.ViewPlayerCardsPage || UserClosingHand || !On(FeatKeepHandOpen))
+            if (!On(FeatKeepHandOpen) || UserClosingHand || UserClosingPanelFrames > 0)
+            {
+                return false;
+            }
+            bool keep = false;
+            for (int i = 0; i < s_keepOpenOffTurn.Length; i++)
+            {
+                if (s_keepOpenOffTurn[i] == page) { keep = true; break; }
+            }
+            if (!keep)
             {
                 return false;
             }
@@ -1136,12 +1269,13 @@ namespace TfmCardRefresh
                 {
                     return false;
                 }
-                TM_GameInfo info = Singleton<GameManager>.Instance.Game?.GameInfo;
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameInfo info = game != null ? game.GameInfo : null;
                 if (info == null)
                 {
                     return false;
                 }
-                return info.CurrentPlayerLocalId != info.GetMyPlayerLocalId();
+                return info.UserAllowedToPlayLocalID != MyStableLocalId(game, info);
             }
             catch (System.Exception)
             {
@@ -1245,7 +1379,7 @@ namespace TfmCardRefresh
                 }
 
                 // If a hand card is focused, sell exactly that card with no popup.
-                int myId = game.GameInfo.GetMyPlayerLocalId();
+                int myId = MyStableLocalId(game, game.GameInfo);
                 TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(myId);
                 ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
                 int cardId = (page != null) ? Traverse.Create(page).Field("m_CurrentCardID").GetValue<int>() : -1;
@@ -1313,7 +1447,7 @@ namespace TfmCardRefresh
                 {
                     return false;
                 }
-                int myId = game.GameInfo.GetMyPlayerLocalId();
+                int myId = MyStableLocalId(game, game.GameInfo);
                 TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(myId);
                 return board != null && board.HandCards != null && board.HandCards.Contains(cardId);
             }
@@ -1367,6 +1501,75 @@ namespace TfmCardRefresh
             }
         }
 
+        // "Keep my board focused" state: offline the game focuses whichever bot is
+        // taking its turn; we snap the view back to our own board shortly after (once
+        // per turn change, after a short delay so we win the game's own focus).
+        private int _lastCurrentPlayerSeen = int.MinValue;
+        private float _refocusDelay = -1f;
+
+        private void KeepMyBoardFocused()
+        {
+            if (!On(FeatStayFocused))
+            {
+                return;
+            }
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameInfo info = game != null ? game.GameInfo : null;
+                if (info == null || info.IsOnline)
+                {
+                    return; // online the HUD already stays on your own seat
+                }
+                int myId = MyStableLocalId(game, info);
+                int cur = info.CurrentPlayerLocalId;
+                if (cur != _lastCurrentPlayerSeen)
+                {
+                    _lastCurrentPlayerSeen = cur;
+                    _refocusDelay = (cur != myId) ? 0.35f : -1f; // a bot took over -> refocus me
+                }
+                if (_refocusDelay >= 0f)
+                {
+                    _refocusDelay -= Time.unscaledDeltaTime;
+                    if (_refocusDelay < 0f)
+                    {
+                        FocusMyBoard(game, myId);
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        private static void FocusMyBoard(TM_Game game, int myId)
+        {
+            try
+            {
+                HUD_PlayerTabs tabs = game.HUD != null ? game.HUD.PlayerTabs : null;
+                if (tabs == null || tabs.PlayerTabs == null)
+                {
+                    return;
+                }
+                foreach (KeyValuePair<int, HUD_PlayerTab> kv in tabs.PlayerTabs)
+                {
+                    if (kv.Key == myId && kv.Value != null)
+                    {
+                        kv.Value.OnClickIdentifierPannel();
+                        RebindOpenStatPopup(myId);
+                        return;
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
         // The Card* stat popups are bound to the player they were opened for. After
         // switching the focused player, reopen an open one for the new player so it
         // shows the new player's values instead of the original's.
@@ -1390,14 +1593,16 @@ namespace TfmCardRefresh
         }
 
         // Numbered, clickable items for the current context (recomputed each frame):
-        // the SELECT ONE choices, else the actions popup's actions. Number keys
-        // activate them; OnGUI draws a number over each.
-        private readonly List<(Transform t, System.Action act)> _targets = new List<(Transform, System.Action)>();
+        // the SELECT ONE choices, else the actions popup's actions. Each carries the key
+        // that fires it and the label OnGUI paints over it, so a card grid can map the
+        // top row to numbers and the second row to Q W E R (see AddRowBasedTargets),
+        // while list-style contexts just take the keys in flat order (see AddTarget).
+        private readonly List<(Transform t, System.Action act, KeyCode key, string label)> _targets =
+            new List<(Transform, System.Action, KeyCode, string)>();
 
-        // Keys that fire the numbered targets, in on-screen order (Cmd/Ctrl held).
-        // Cards 1-4 keep the number row; cards 5-8 use the q/w/e/r row instead of
+        // Keys that fire the numbered targets, in on-screen order (Alt held; badged on
+        // peek). Cards 1-4 use the number row; cards 5-8 use the q/w/e/r row instead of
         // reaching for 5-8. More than eight on a page: change page and reuse these.
-        // s_targetKeyLabels is what DrawNumberBadges paints over each item.
         private static readonly KeyCode[] s_targetKeys =
         {
             KeyCode.Alpha1, KeyCode.Alpha2, KeyCode.Alpha3, KeyCode.Alpha4,
@@ -1405,9 +1610,69 @@ namespace TfmCardRefresh
         };
         private static readonly string[] s_targetKeyLabels = { "1", "2", "3", "4", "Q", "W", "E", "R" };
 
+        // A target's key went down this frame; number keys also accept their keypad twin.
+        private static bool TargetKeyDown(KeyCode key)
+        {
+            if (Input.GetKeyDown(key))
+            {
+                return true;
+            }
+            if (key >= KeyCode.Alpha1 && key <= KeyCode.Alpha9)
+            {
+                return Input.GetKeyDown(KeyCode.Keypad1 + (key - KeyCode.Alpha1));
+            }
+            return false;
+        }
+
+        // Append a target taking the next key in flat order (1 2 3 4 Q W E R). Used by
+        // the list/popup contexts where there is no meaningful row/column layout.
+        private void AddTarget(Transform t, System.Action act)
+        {
+            int i = _targets.Count;
+            if (i >= s_targetKeys.Length)
+            {
+                return; // out of keys; leave the rest un-numbered
+            }
+            _targets.Add((t, act, s_targetKeys[i], s_targetKeyLabels[i]));
+        }
+
+        // Append card-grid targets so the top visual row maps to the number keys and the
+        // second row to Q W E R, column-aligned (matching the keyboard layout) regardless
+        // of how many cards sit in each row. Rows past the second are left un-numbered.
+        private void AddRowBasedTargets(List<(Transform t, System.Action act)> items)
+        {
+            items.Sort((a, b) =>
+            {
+                float ay = Mathf.Round(a.t.position.y / 40f);
+                float by = Mathf.Round(b.t.position.y / 40f);
+                return ay != by ? by.CompareTo(ay) : a.t.position.x.CompareTo(b.t.position.x);
+            });
+            int row = 0;
+            int col = 0;
+            float prevBucket = float.NaN;
+            foreach ((Transform t, System.Action act) in items)
+            {
+                float bucket = Mathf.Round(t.position.y / 40f);
+                if (!float.IsNaN(prevBucket) && bucket != prevBucket)
+                {
+                    row++;
+                    col = 0;
+                }
+                prevBucket = bucket;
+                int keyIndex = (row == 0 && col < 4) ? col
+                    : (row == 1 && col < 4) ? 4 + col
+                    : -1;
+                if (keyIndex >= 0)
+                {
+                    _targets.Add((t, act, s_targetKeys[keyIndex], s_targetKeyLabels[keyIndex]));
+                }
+                col++;
+            }
+        }
+
         // Secondary numbered group for the hand's sort/filter tabs (COST, PLAYABILITY,
         // CARD TYPE, TAGS, CHRONOLOGICAL). Kept off the card keys so both can show at
-        // once: cards on 1-4/QWER, filters on 5-9. Cmd/Ctrl held, same as the cards.
+        // once: cards on 1-4/QWER, filters on 5-9. Bare keys, same as the cards.
         private readonly List<(Transform t, System.Action act)> _sortTargets = new List<(Transform, System.Action)>();
         private static readonly KeyCode[] s_sortKeys =
         {
@@ -1415,7 +1680,7 @@ namespace TfmCardRefresh
         };
         private static readonly string[] s_sortKeyLabels = { "5", "6", "7", "8", "9" };
 
-        // Key-letter hints drawn over on-screen buttons while Cmd/Ctrl is held, so the
+        // Key-letter hints drawn over on-screen buttons while the highlight key is held, so the
         // panel keys are discoverable. Refreshed on the same cadence as _targets.
         private readonly List<(Transform t, string label)> _keyHints = new List<(Transform, string)>();
 
@@ -1425,10 +1690,135 @@ namespace TfmCardRefresh
         private readonly List<(Transform t, string label)> _hintTargets =
             new List<(Transform, string)>();
 
-        private static bool ModifierHeld()
+        // True while the "highlight" key is held. This is the card-play layer: panels
+        // and actions are bare keys, and holding this both reveals the badges/hints and
+        // arms the numbered keys (Alt+1-4 / Q W E R play a card, Alt+5-9 pick a sort
+        // tab). Defaults to Alt/Option, which has no OS conflict on either platform
+        // (unlike Cmd, whose Q/W/M/H are macOS-reserved) and no Ctrl+click=right-click
+        // side effect. Accepts the matching right-hand key so either Alt works.
+        private static bool ModKeyHeld(KeyCode k)
         {
-            return Input.GetKey(KeyCode.LeftCommand) || Input.GetKey(KeyCode.RightCommand)
-                || Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            if (Input.GetKey(k))
+            {
+                return true;
+            }
+            switch (k)
+            {
+                case KeyCode.LeftShift: return Input.GetKey(KeyCode.RightShift);
+                case KeyCode.LeftControl: return Input.GetKey(KeyCode.RightControl);
+                case KeyCode.LeftAlt: return Input.GetKey(KeyCode.RightAlt);
+                case KeyCode.LeftCommand: return Input.GetKey(KeyCode.RightCommand);
+                default: return false;
+            }
+        }
+
+        // Alt: reveal badges + play now. Add-key (Shift): reveal badges + queue instead.
+        private static bool PeekHeld() { return ModKeyHeld(Key(KeyPeek, KeyCode.LeftAlt)); }
+        private static bool AddHeld() { return ModKeyHeld(Key(KeyPrepareAdd, KeyCode.LeftShift)); }
+
+        // If the target under this transform is a queueable atomic action (a placement-
+        // free standard project, a milestone, or an award), return how to replay it;
+        // else null. Standard projects that need a tile (Aquifer/Greenery/City) and Sell
+        // are rejected. Uses the element's own action/element type so replay is identical.
+        private static PreparedItem? DescribeTarget(Transform t)
+        {
+            try
+            {
+                if (t == null)
+                {
+                    return null;
+                }
+                StandardProjectElement sp = t.GetComponent<StandardProjectElement>();
+                if (sp != null)
+                {
+                    int et = Traverse.Create(sp).Method("GetElementType").GetValue<int>();
+                    if (et == (int)EStandardProject.PowerPlant)
+                    {
+                        return PreparedItem.MakeAction(EActionType.StandardProject, et, "Power Plant");
+                    }
+                    if (et == (int)EStandardProject.Asteroid)
+                    {
+                        return PreparedItem.MakeAction(EActionType.StandardProject, et, "Asteroid");
+                    }
+                    return null; // needs a tile / card selection -> can't auto-fire
+                }
+                MilestoneElement ms = t.GetComponent<MilestoneElement>();
+                if (ms != null)
+                {
+                    int et = Traverse.Create(ms).Method("GetElementType").GetValue<int>();
+                    return PreparedItem.MakeAction(EActionType.Milestone, et, "Milestone: " + ms.MilestoneType);
+                }
+                AwardElement aw = t.GetComponent<AwardElement>();
+                if (aw != null)
+                {
+                    int et = Traverse.Create(aw).Method("GetElementType").GetValue<int>();
+                    return PreparedItem.MakeAction(EActionType.Award, et, "Award #" + et);
+                }
+                // A blue card's action (in the Card Actions popup): queue its card id; at
+                // your turn the mod opens the popup and clicks it (atomic ones run; ones
+                // that ask for a choice hand off to you).
+                CardActionElement ca = t.GetComponent<CardActionElement>();
+                if (ca != null)
+                {
+                    return PreparedItem.MakeCardAction(ca.CardId, "Action: " + CardNameById(ca.CardId));
+                }
+                // A card in hand: queue its id; at your turn the mod opens its play view
+                // so you finish payment / placement (it can't do those for you).
+                CardPreview cp = t.GetComponent<CardPreview>();
+                if (cp != null)
+                {
+                    return PreparedItem.MakeCard(cp.CardId, "Card: " + CardName(cp));
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return null;
+        }
+
+        // Localized card name for a card id (falls back to the id). Reflection keeps this
+        // resilient to dataset shape differences.
+        private static string CardNameById(int id)
+        {
+            try
+            {
+                object ds = Singleton<GameManager>.Instance.DataSet;
+                object data = Traverse.Create(ds).Method("GetCardById", new object[] { id }).GetValue();
+                if (data != null)
+                {
+                    string n = Traverse.Create(data).Method("GetLocalizedName", new object[] { false }).GetValue<string>();
+                    if (!string.IsNullOrEmpty(n))
+                    {
+                        return n;
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return "#" + id;
+        }
+
+        // Best-effort display name for a hand card (falls back to the id).
+        private static string CardName(CardPreview cp)
+        {
+            try
+            {
+                object tmp = Traverse.Create(cp).Property("CardTextName").GetValue()
+                    ?? Traverse.Create(cp).Field("CardTextName").GetValue();
+                if (tmp != null)
+                {
+                    string s = Traverse.Create(tmp).Property("text").GetValue<string>();
+                    if (!string.IsNullOrEmpty(s))
+                    {
+                        return s;
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return "#" + cp.CardId;
         }
 
         // The top page of the UI stack, used as a cheap change signal for the badge
@@ -1562,7 +1952,7 @@ namespace TfmCardRefresh
                 }
                 // Tray hand + conversion buttons.
                 HUD_PlayerTray tray = game.HUD.PlayerTray;
-                AddFieldTarget(tray, "m_CardHand", Key(KeyProjects, KeyCode.C).ToString());
+                AddFieldTarget(tray, "m_CardHand", Key(KeyProjects, KeyCode.P).ToString());
                 AddFieldTarget(tray, "m_PlantConversion", Key(KeyGreenery, KeyCode.G).ToString());
                 AddFieldTarget(tray, "m_HeatConversion", Key(KeyTemperature, KeyCode.F).ToString());
                 // Board-view toggle.
@@ -1650,7 +2040,34 @@ namespace TfmCardRefresh
                         {
                             int idx = Traverse.Create(choice).Property("Index").GetValue<int>();
                             Transform tr = Traverse.Create(choice).Property("transform").GetValue<Transform>();
-                            _targets.Add((tr, () => ct.Method("OnChoiceClicked", idx).GetValue()));
+                            AddTarget(tr, () => ct.Method("OnChoiceClicked", idx).GetValue());
+                        }
+                    }
+                    return;
+                }
+
+                // Corporation selection: number each corp card. The badge selects
+                // (highlights) that corp, exactly like clicking it; Space then confirms.
+                CorporationSelectionPopup corpPopup =
+                    PageOpen(EPage.CorporationSelectionPopup) ? Object.FindFirstObjectByType<CorporationSelectionPopup>() : null;
+                if (corpPopup != null)
+                {
+                    List<CorporationCard> corps = corpPopup.CorporationCards;
+                    if (corps != null)
+                    {
+                        List<CorporationCard> shown = new List<CorporationCard>();
+                        foreach (CorporationCard c in corps)
+                        {
+                            if (c != null && c.isActiveAndEnabled && IsOnScreen(c.transform))
+                            {
+                                shown.Add(c);
+                            }
+                        }
+                        SortByScreenPosition(shown);
+                        foreach (CorporationCard c in shown)
+                        {
+                            CorporationCard corp = c;
+                            AddTarget(corp.transform, () => corp.SelectCorporation());
                         }
                     }
                     return;
@@ -1671,7 +2088,7 @@ namespace TfmCardRefresh
                             if (pre != null)
                             {
                                 PlayerResourceElement e = pre;
-                                _targets.Add((e.transform, () => e.OnClick()));
+                                AddTarget(e.transform, () => e.OnClick());
                             }
                         }
                     }
@@ -1685,7 +2102,7 @@ namespace TfmCardRefresh
                     foreach (CardActionElement element in actionsPopup.GetComponentsInChildren<CardActionElement>())
                     {
                         CardActionElement el = element;
-                        _targets.Add((el.transform, () => el.OnActionButtonTriggered()));
+                        AddTarget(el.transform, () => el.OnActionButtonTriggered());
                     }
                     return;
                 }
@@ -1710,7 +2127,7 @@ namespace TfmCardRefresh
                     foreach (ActionElementBase element in els)
                     {
                         ActionElementBase el = element;
-                        _targets.Add((el.transform, () => el.OnUseButtonPressed()));
+                        AddTarget(el.transform, () => el.OnUseButtonPressed());
                     }
                     if (_targets.Count > 0)
                     {
@@ -1748,7 +2165,7 @@ namespace TfmCardRefresh
                         Button b = r.GetComponent<Button>();
                         if (b != null)
                         {
-                            _targets.Add((r.transform, () => b.onClick.Invoke()));
+                            AddTarget(r.transform, () => b.onClick.Invoke());
                         }
                     }
                     if (_targets.Count > 0)
@@ -1777,14 +2194,16 @@ namespace TfmCardRefresh
                             }
                         }
                     }
-                    SortByScreenPosition(grid);
+                    List<(Transform t, System.Action act)> gridItems = new List<(Transform, System.Action)>();
                     foreach (CardPreview c in grid)
                     {
                         CardPreview card = c;
                         Button btn = CardButton(card);
-                        _targets.Add((card.transform,
+                        gridItems.Add((card.transform,
                             btn != null ? (System.Action)(() => btn.onClick.Invoke()) : (() => card.ExpandCardToView())));
                     }
+                    // Top row -> 1-4, second row -> Q W E R, column-aligned.
+                    AddRowBasedTargets(gridItems);
                     // Also badge the sort/filter tabs (5-9) shown along the bottom.
                     PopulateSortTargets(viewPage);
                     if (_targets.Count > 0)
@@ -1822,7 +2241,7 @@ namespace TfmCardRefresh
                 foreach (BaseCardPreview c in cards)
                 {
                     BaseCardPreview card = c;
-                    _targets.Add((card.transform, () => PressCardButton(card)));
+                    AddTarget(card.transform, () => PressCardButton(card));
                 }
             }
             catch (System.Exception)
@@ -1853,7 +2272,7 @@ namespace TfmCardRefresh
             foreach (CardPreview c in cards)
             {
                 CardPreview card = c;
-                _targets.Add((card.transform, () => card.OnSelectCard()));
+                AddTarget(card.transform, () => card.OnSelectCard());
             }
             return _targets.Count > 0;
         }
@@ -2101,7 +2520,14 @@ namespace TfmCardRefresh
                 {
                     // Toggling a popup closed counts as closing a panel (stop auto-reopen);
                     // toggling one open clears that so it can auto-reopen again.
-                    UserClosedPanel = UIManager.Instance.IsPageInStack(page);
+                    bool wasOpen = UIManager.Instance.IsPageInStack(page);
+                    UserClosedPanel = wasOpen;
+                    if (wasOpen)
+                    {
+                        // A deliberate close: let it through the off-turn suppression
+                        // (covers the async close-animation callback for ~0.5s).
+                        UserClosingPanelFrames = 30;
+                    }
                     game.HUD.PlayerTray.ShowPopup(page);
                 }
             }
@@ -2371,7 +2797,7 @@ namespace TfmCardRefresh
         private static ScrollSnapRect FindActiveCardScroll()
         {
             // Each scan is gated on its page being open so this is cheap when no card
-            // scroller is up (the common case while Cmd/Ctrl is held on the board).
+            // scroller is up (the common case while the highlight key is held on the board).
             if (PageOpen(EPage.ExpandPlayerCardsPage))
             {
                 ExpandPlayerCardsPage carousel = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
@@ -2481,6 +2907,635 @@ namespace TfmCardRefresh
             }
         }
 
+        // Max non-Pass items the queue holds (a turn is two actions). Pass is excluded
+        // from the cap and always fires last.
+        private const int PrepareMaxItems = 2;
+
+        // Add an action to the queue, capped at PrepareMaxItems: if it is already full,
+        // the most recently added action is pushed out to make room for the new one.
+        private void EnqueuePrepared(PreparedItem item)
+        {
+            if (item.IsPass)
+            {
+                return; // Pass is toggled elsewhere, not enqueued here
+            }
+            int nonPass = 0;
+            for (int i = 0; i < _prepareQueue.Count; i++)
+            {
+                if (!_prepareQueue[i].IsPass)
+                {
+                    nonPass++;
+                }
+            }
+            if (nonPass >= PrepareMaxItems)
+            {
+                for (int i = _prepareQueue.Count - 1; i >= 0; i--)
+                {
+                    if (!_prepareQueue[i].IsPass)
+                    {
+                        _prepareQueue.RemoveAt(i); // push out the last-added action
+                        break;
+                    }
+                }
+            }
+            _prepareQueue.Add(item);
+        }
+
+        // Edit the queue while the Prepare panel is open. Items are added from source
+        // (add-key + badge) and Pass via its own key; here only Backspace (undo the last
+        // add) and Delete (clear) apply. Returns true if it consumed the key.
+        private bool HandlePreparePanelInput()
+        {
+            if (Input.GetKeyDown(KeyCode.Delete))
+            {
+                _prepareQueue.Clear();
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Backspace))
+            {
+                if (_prepareQueue.Count > 0)
+                {
+                    _prepareQueue.RemoveAt(_prepareQueue.Count - 1); // undo the last add
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // My fixed seat's local id. GetMyPlayerLocalId() only works online; offline it
+        // returns the CURRENT player, so "is it my turn" would always be true and the
+        // queue would fire on every player's turn. Offline we instead find the human-
+        // controlled seat (unique in solo-vs-AI), which is stable across turns.
+        internal static int MyStableLocalId(TM_Game game, TM_GameInfo info)
+        {
+            try
+            {
+                if (info.IsOnline)
+                {
+                    return info.GetMyPlayerLocalId();
+                }
+                if (game.GameData != null && game.GameData.PlayerBoardData != null)
+                {
+                    foreach (KeyValuePair<int, TM_PlayerBoardData> kv in game.GameData.PlayerBoardData)
+                    {
+                        TM_Player p = info.GetPlayerWithLocalId(kv.Key);
+                        if (p != null && p.TryGetAgentAsHuman(out TM_HumanAgent _))
+                        {
+                            return kv.Key;
+                        }
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return info.GetMyPlayerLocalId(); // fallback
+        }
+
+        // Convenience: my stable seat id from the live game, or -1 if unavailable.
+        internal static int MyStableLocalId()
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return -1;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameInfo info = game != null ? game.GameInfo : null;
+                return info != null ? MyStableLocalId(game, info) : -1;
+            }
+            catch (System.Exception)
+            {
+                return -1;
+            }
+        }
+
+        // The current event is a GameActionEvent (the game is waiting for an action).
+        // Reflection avoids referencing the game's event namespace. Combined with the
+        // my-turn check, this is the exact gate HandleSelectActionSelection uses.
+        private static bool CurrentEventIsGameAction(TM_Game game)
+        {
+            try
+            {
+                object ep = Traverse.Create(game).Method("GetEventProvider").GetValue();
+                if (ep == null)
+                {
+                    return false;
+                }
+                object ev = Traverse.Create(ep).Property("CurrentEvent").GetValue();
+                return ev != null && ev.GetType().Name == "GameActionEvent";
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        private void DrawPreparePanel()
+        {
+            if (!_showPrepare)
+            {
+                return;
+            }
+            if (s_prepareStyle == null)
+            {
+                s_prepareStyle = new GUIStyle
+                {
+                    fontSize = 22,
+                    fontStyle = FontStyle.Bold,
+                    richText = true,
+                    alignment = TextAnchor.MiddleLeft,
+                };
+                s_prepareStyle.normal.textColor = Color.white;
+            }
+            // Ordered rows: the actions in play order, then Pass (always last).
+            List<string> rows = new List<string>();
+            int n = 0;
+            foreach (PreparedItem it in _prepareQueue)
+            {
+                if (!it.IsPass)
+                {
+                    rows.Add((++n) + ".  " + it.label);
+                }
+            }
+            foreach (PreparedItem it in _prepareQueue)
+            {
+                if (it.IsPass)
+                {
+                    rows.Add("+   Pass");
+                    break;
+                }
+            }
+            float rowH = 30f;
+            float height = 16f + (rows.Count + 1) * rowH;
+            GUILayout.BeginArea(new Rect(12f, Screen.height - height - 40f, 460f, height), GUI.skin.box);
+            GUILayout.Label("<color=#33f2a0>QUEUE:</color>", s_prepareStyle);
+            if (rows.Count == 0)
+            {
+                GUILayout.Label("   <color=#888888>(empty)</color>", s_prepareStyle);
+            }
+            else
+            {
+                foreach (string r in rows)
+                {
+                    GUILayout.Label("   " + r, s_prepareStyle);
+                }
+            }
+            GUILayout.EndArea();
+        }
+
+        // Auto-fire the prepared queue once it is the player's action turn. Runs one
+        // step per call: submit an action, then on later frames press Yes on the game's
+        // own confirm dialog (or nothing if the player has confirmations off), pause a
+        // beat for the event to resolve, then move on. Stops when actions run out (any
+        // unfired entries stay queued for the next turn) or nothing is affordable.
+        private void FirePreparedActions()
+        {
+            // Stay active while a confirm from the last fired action is still pending,
+            // even though the queue is already empty - otherwise the final action's
+            // Yes/No never gets pressed and it reverts.
+            if (_prepareQueue.Count == 0 && !_fireAwaitConfirm)
+            {
+                return;
+            }
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameInfo info = game != null ? game.GameInfo : null;
+                if (info == null)
+                {
+                    return;
+                }
+                TM_Player me = info.GetMyPlayer();
+                int myId = MyStableLocalId(game, info);
+                bool myTurn = info.UserAllowedToPlayLocalID == myId;
+
+                if (me == null || !myTurn)
+                {
+                    _fireAwaitConfirm = false; // drop stale confirm state; it isn't my turn
+                    return;
+                }
+
+                // Confirm the game's Yes/No that our previous submit raised. Poll every
+                // frame (not gated by the cooldown) and press Yes the moment the button
+                // is actually interactable, since the dialog fades in a beat after submit.
+                // If no dialog ever appears within the window, the player has confirmations
+                // off (the action already ran), so just clear the flag.
+                if (_fireAwaitConfirm)
+                {
+                    _fireConfirmElapsed += Time.unscaledDeltaTime;
+                    GenericPopup popup = Object.FindFirstObjectByType<GenericPopup>();
+                    if (popup != null)
+                    {
+                        if (PressDefaultPopupButton(popup))
+                        {
+                            Logger.LogInfo("Prepare: confirmed (Yes pressed) after " + _fireConfirmElapsed.ToString("0.00") + "s");
+                            _fireAwaitConfirm = false;
+                            _fireConfirmElapsed = 0f;
+                            _fireCooldown = 0.5f; // let the action resolve before the next
+                        }
+                        else if (_fireConfirmElapsed >= 3f)
+                        {
+                            Logger.LogWarning("Prepare: gave up - a confirm dialog is open but its Yes/Ok button was never pressable");
+                            _fireAwaitConfirm = false;
+                            _fireConfirmElapsed = 0f;
+                        }
+                        return; // popup up but Yes not pressable yet -> keep polling
+                    }
+                    if (_fireConfirmElapsed >= 1.25f)
+                    {
+                        Logger.LogInfo("Prepare: no confirm dialog appeared (confirmations off?) - assuming it ran");
+                        _fireAwaitConfirm = false;
+                        _fireConfirmElapsed = 0f;
+                        _fireCooldown = 0.3f;
+                    }
+                    return;
+                }
+
+                _fireCooldown -= Time.unscaledDeltaTime;
+                if (_fireCooldown > 0f)
+                {
+                    return;
+                }
+
+                if (me.NbActionsLeft <= 0)
+                {
+                    return; // out of actions this turn; keep the rest queued
+                }
+
+                // If the next non-Pass item is a Card, drive it here - before the guard
+                // below, because opening the card's play view itself trips ModDialogOpen.
+                // Insta-plays it: navigate to the card and press its play button. Waits
+                // during a real hand-off (target / placement / choice / dialog); once the
+                // player finishes that, the queue resumes.
+                int frontIdx = -1;
+                for (int i = 0; i < _prepareQueue.Count; i++)
+                {
+                    if (!_prepareQueue[i].IsPass) { frontIdx = i; break; }
+                }
+                if (frontIdx >= 0 && _prepareQueue[frontIdx].kind == PreparedKind.Card)
+                {
+                    if (!CurrentEventIsGameAction(game) || HandOffInProgress())
+                    {
+                        return; // not action-ready, or the player is mid hand-off
+                    }
+                    PreparedItem card = _prepareQueue[frontIdx];
+                    if (NavigateToCard(card.arg))
+                    {
+                        Logger.LogInfo("Prepare: played " + card.label);
+                        _prepareQueue.RemoveAt(frontIdx);
+                        _cardNavElapsed = 0f;
+                        _fireAwaitConfirm = true; // auto-press the "Play this card?" payment confirm
+                        _fireConfirmElapsed = 0f;
+                        _fireCooldown = 0.5f;
+                    }
+                    else
+                    {
+                        _cardNavElapsed += Time.unscaledDeltaTime;
+                        if (_cardNavElapsed >= 3f)
+                        {
+                            Logger.LogWarning("Prepare: card not playable (unaffordable / not in hand), skipping " + card.label);
+                            _prepareQueue.RemoveAt(frontIdx);
+                            _cardNavElapsed = 0f;
+                        }
+                        _fireCooldown = 0.2f;
+                    }
+                    return;
+                }
+
+                // Only submit when the game is actually waiting for an action (my turn is
+                // already ensured above), the HUD is idle and interactable (goes false
+                // while an action resolves), and no unrelated dialog is already open.
+                // Also hold off while you are still adding from source (add-key held) or
+                // the standard-projects/milestones/awards panel is open, so on-turn adds
+                // don't fire mid-add and we submit with that panel closed.
+                if (!CurrentEventIsGameAction(game)
+                    || game.HUD == null || !game.HUD.HasFunctionalitiesEnabled
+                    || AddHeld() || PageOpen(EPage.ActionPopup) || ModDialogOpen()
+                    || Object.FindFirstObjectByType<GenericPopup>() != null)
+                {
+                    return;
+                }
+
+                // Fire the next affordable action first. Pass is never fired here; it
+                // waits until it is the only thing left in the queue (so it always goes
+                // last, after every other action has played).
+                for (int i = 0; i < _prepareQueue.Count; i++)
+                {
+                    PreparedItem item = _prepareQueue[i];
+                    if (item.IsPass)
+                    {
+                        continue;
+                    }
+                    // Blue card action: open the popup and click it. Atomic ones run (and
+                    // any Yes/No is auto-confirmed); ones that raise a choice hand off to
+                    // the user (the ModDialogOpen guard pauses us until they finish).
+                    if (item.kind == PreparedKind.CardAction)
+                    {
+                        if (NavigateToCardAction(item.arg))
+                        {
+                            Logger.LogInfo("Prepare: triggered " + item.label);
+                            _prepareQueue.RemoveAt(i);
+                            _cardNavElapsed = 0f;
+                            _fireAwaitConfirm = true; // catch a simple confirm if one appears
+                            _fireConfirmElapsed = 0f;
+                            _fireCooldown = 0.35f;
+                        }
+                        else
+                        {
+                            _cardNavElapsed += Time.unscaledDeltaTime;
+                            if (_cardNavElapsed >= 3f)
+                            {
+                                Logger.LogWarning("Prepare: card action not available, skipping " + item.label);
+                                _prepareQueue.RemoveAt(i);
+                                _cardNavElapsed = 0f;
+                            }
+                            _fireCooldown = 0.2f;
+                        }
+                        return;
+                    }
+                    if (!CanFire(game, myId, item))
+                    {
+                        continue;
+                    }
+                    Logger.LogInfo("Prepare: firing " + item.label + " (NbActionsLeft=" + me.NbActionsLeft + ")");
+                    SubmitPrepared(info, item);
+                    _prepareQueue.RemoveAt(i);
+                    _fireAwaitConfirm = true;
+                    _fireConfirmElapsed = 0f;
+                    _fireCooldown = 0.35f;
+                    return;
+                }
+                // Everything but Pass is done: end the turn as the final step.
+                bool onlyPassLeft = true;
+                bool hasPass = false;
+                foreach (PreparedItem item in _prepareQueue)
+                {
+                    if (item.IsPass)
+                    {
+                        hasPass = true;
+                    }
+                    else
+                    {
+                        onlyPassLeft = false; // a real action is stuck (e.g. can't afford)
+                    }
+                }
+                if (onlyPassLeft && hasPass)
+                {
+                    Logger.LogInfo("Prepare: passing / ending turn (final queued step)");
+                    _prepareQueue.RemoveAll(x => x.IsPass);
+                    TryEndTurn();
+                    _fireAwaitConfirm = true; // confirm the "do you want to pass?" dialog
+                    _fireConfirmElapsed = 0f;
+                    _fireCooldown = 0.35f;
+                    return;
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+        }
+
+        // Bring a queued card to its play view so the player can finish it. One step per
+        // call: open the hand if closed, else find the card in the grid and open it.
+        // Returns true once the card has been opened (or the play view is already up),
+        // false while still working. Cards on another grid page aren't reachable here.
+        private bool NavigateToCard(int cardId)
+        {
+            try
+            {
+                if (PageOpen(EPage.ExpandPlayerCardsPage))
+                {
+                    return PressOpenCardPlayButton(); // insta-confirm the play
+                }
+                if (PageOpen(EPage.ViewPlayerCardsPage))
+                {
+                    ViewPlayerCardsPage vp = Object.FindFirstObjectByType<ViewPlayerCardsPage>();
+                    System.Collections.IEnumerable cardObjs = vp != null
+                        ? Traverse.Create(vp).Field("m_CardObjects").GetValue() as System.Collections.IEnumerable
+                        : null;
+                    if (cardObjs != null)
+                    {
+                        foreach (object o in cardObjs)
+                        {
+                            if (o is CardPreview cp && cp.CardId == cardId && cp.isActiveAndEnabled)
+                            {
+                                Button btn = CardButton(cp);
+                                if (btn != null)
+                                {
+                                    btn.onClick.Invoke();
+                                }
+                                else
+                                {
+                                    cp.ExpandCardToView();
+                                }
+                                return false; // only opened the play view; press Play next cycle
+                            }
+                        }
+                    }
+                    return false; // not on the visible grid page
+                }
+                OpenHand();
+                return false; // opening the hand; retry next cycle
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        // Press the play/use button on the card currently shown in the play view. Returns
+        // true once clicked; false if the view/button isn't ready (e.g. unaffordable).
+        private static bool PressOpenCardPlayButton()
+        {
+            try
+            {
+                ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
+                if (page == null)
+                {
+                    return false;
+                }
+                int currentCardId = Traverse.Create(page).Field("m_CurrentCardID").GetValue<int>();
+                foreach (BigCardPreview preview in Object.FindObjectsByType<BigCardPreview>(FindObjectsSortMode.None))
+                {
+                    if (preview.CardId != currentCardId)
+                    {
+                        continue;
+                    }
+                    Button button = Traverse.Create(preview).Field("m_Btn").GetValue<Button>();
+                    if (button != null && button.interactable && button.gameObject.activeInHierarchy)
+                    {
+                        button.onClick.Invoke();
+                        return true;
+                    }
+                    return false; // found the card but its play button isn't pressable yet
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return false;
+        }
+
+        // True when the game is waiting for MY action input (my action turn). Used to
+        // decide auto-cache: off-turn caches, on-turn plays.
+        private static bool IsMyActionTurn()
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return false;
+                }
+                TM_Game game = Singleton<GameManager>.Instance.Game;
+                TM_GameInfo info = game != null ? game.GameInfo : null;
+                if (info == null)
+                {
+                    return false;
+                }
+                return info.UserAllowedToPlayLocalID == MyStableLocalId(game, info);
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        // A context where a badge press must SELECT/activate, never cache: the buy/keep
+        // picker, sell, steal, resource pick, card-action choice, or the card play view.
+        // In these, cache mode is suppressed so you can still pick cards normally.
+        private static bool IsSelectionContext()
+        {
+            return PageOpen(EPage.CardSelectionPage) || PageOpen(EPage.SellPatentPopupPage)
+                || PageOpen(EPage.StealResourcePage) || PageOpen(EPage.PlayerCardResourcePage)
+                || PageOpen(EPage.ChooseCardActionCardPage) || PageOpen(EPage.ExpandPlayerCardsPage);
+        }
+
+        // A user-facing selection is in progress (target / placement / choice / dialog)
+        // that the mod must not drive through - it hands off to the player. Excludes our
+        // own hand-browse and card play-view navigation.
+        private static bool HandOffInProgress()
+        {
+            try
+            {
+                switch (TopPage())
+                {
+                    case EPage.CardSelectionPage:
+                    case EPage.SellPatentPopupPage:
+                    case EPage.StealResourcePage:
+                    case EPage.PlayerCardResourcePage:
+                        return true;
+                }
+                return Object.FindFirstObjectByType<GenericPopup>() != null
+                    || FindActiveConversionController() != null
+                    || FindActiveChoiceController() != null;
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        // Bring a queued blue-card action to the fore and trigger it. One step per call:
+        // open the Card Actions popup if closed, else find the action by its card id and
+        // click it. Returns true once clicked, false while still working.
+        private bool NavigateToCardAction(int cardId)
+        {
+            try
+            {
+                if (!PageOpen(EPage.CardActionsPopup))
+                {
+                    TM_Game game = Singleton<GameManager>.Instance.Game;
+                    if (game != null && game.HUD != null && game.HUD.PlayerTray != null)
+                    {
+                        game.HUD.PlayerTray.ShowPopup(EPage.CardActionsPopup);
+                    }
+                    return false; // opening; retry next cycle
+                }
+                CardActionsPopup popup = Object.FindFirstObjectByType<CardActionsPopup>();
+                if (popup != null)
+                {
+                    foreach (CardActionElement el in popup.GetComponentsInChildren<CardActionElement>())
+                    {
+                        if (el == null || !el.isActiveAndEnabled)
+                        {
+                            continue;
+                        }
+                        if (el.CardId == cardId)
+                        {
+                            el.OnActionButtonTriggered();
+                            return true;
+                        }
+                    }
+                }
+                return false; // action not present / already used
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        // Conservative affordability guard so we never submit an action the player
+        // can't pay for (which would raise a confirm we'd wrongly accept). Uses base
+        // costs; awards vary so they are not pre-checked (the game still validates).
+        private static bool CanFire(TM_Game game, int myId, PreparedItem item)
+        {
+            try
+            {
+                TM_PlayerBoardData board = game.GameData.GetPlayerBoardData(myId);
+                if (board == null)
+                {
+                    return false;
+                }
+                int mc = board.ResourceBank[EResourceType.MegaCredit].Quantity;
+                if (item.kind == PreparedKind.Conversion)
+                {
+                    // Greenery needs 8 plants; temperature needs 8 heat. Check the right one.
+                    return board.ResourceBank[item.res].Quantity >= 8;
+                }
+                if (item.kind == PreparedKind.Action)
+                {
+                    if (item.actionType == EActionType.StandardProject)
+                    {
+                        if (item.arg == (int)EStandardProject.PowerPlant) return mc >= 11;
+                        if (item.arg == (int)EStandardProject.Asteroid) return mc >= 14;
+                        return false;
+                    }
+                    if (item.actionType == EActionType.Milestone) return mc >= 8;
+                    if (item.actionType == EActionType.Award) return true; // cost varies
+                }
+                return true;
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
+        }
+
+        private static void SubmitPrepared(TM_GameInfo info, PreparedItem item)
+        {
+            switch (item.kind)
+            {
+                case PreparedKind.Conversion:
+                    info.CurrentPlayer.HandleSelectActionSelection(EActionType.Conversion, item.res);
+                    break;
+                case PreparedKind.Action:
+                    // Standard projects want a boxed EStandardProject; milestones/awards
+                    // want a boxed int index. array[1] is the heat-to-spend (0).
+                    object sel = item.actionType == EActionType.StandardProject
+                        ? (object)new object[] { (EStandardProject)item.arg, 0 }
+                        : new object[] { item.arg, 0 };
+                    info.CurrentPlayer.HandleSelectActionSelection(item.actionType, sel);
+                    break;
+            }
+        }
+
         private void HandleSpaceToConfirm()
         {
             if (!On(FeatHotkeys) || !Input.GetKeyDown(Key(KeyConfirm, KeyCode.Space))
@@ -2560,6 +3615,8 @@ namespace TfmCardRefresh
                 }
 
                 // A confirmation dialog takes priority: Space is the default OK/Yes.
+                // (Also the Beginner-corp "are you sure?" dialog, which is a GenericPopup
+                // on top of the corporation popup, so this must precede the corp branch.)
                 GenericPopup popup = Object.FindFirstObjectByType<GenericPopup>();
                 if (popup != null)
                 {
@@ -2568,13 +3625,23 @@ namespace TfmCardRefresh
                     return;
                 }
 
+                // Corporation selection: Space confirms the highlighted corp (Next /
+                // Select). SelectCorporationHandler self-guards and may raise the
+                // Beginner-confirm dialog, handled by the GenericPopup branch above.
+                CorporationSelectionPopup corpPopup =
+                    PageOpen(EPage.CorporationSelectionPopup) ? Object.FindFirstObjectByType<CorporationSelectionPopup>() : null;
+                if (corpPopup != null)
+                {
+                    corpPopup.SelectCorporationHandler();
+                    ClearUiFocus();
+                    return;
+                }
+
                 ExpandPlayerCardsPage page = Object.FindFirstObjectByType<ExpandPlayerCardsPage>();
                 if (page == null)
                 {
-                    // Nothing else is open: Space passes / skips / ends your turn via
-                    // the board's end-turn button, so you can end a turn from the
-                    // keyboard the same way Enter does.
-                    TryEndTurn();
+                    // Nothing else is open: Space does nothing. Skip / pass / end-turn is
+                    // only on the Z key now (queue Pass; it fires on your turn).
                     return;
                 }
                 int currentCardId = Traverse.Create(page).Field("m_CurrentCardID").GetValue<int>();
@@ -2620,9 +3687,9 @@ namespace TfmCardRefresh
 
         // Press the dialog's default confirm button (Yes, else Ok), whichever is
         // shown and interactable.
-        private static void PressDefaultPopupButton(GenericPopup popup)
+        private static bool PressDefaultPopupButton(GenericPopup popup)
         {
-            PressFirstActivePopupButton(popup, "DefaultYesButton", "DefaultOkButton");
+            return PressFirstActivePopupButton(popup, "DefaultYesButton", "DefaultOkButton");
         }
 
         // ESC: cancel an open confirm dialog by pressing its No / Close button, else
@@ -2642,9 +3709,20 @@ namespace TfmCardRefresh
             catch (System.Exception)
             {
             }
+            // Close whatever game window is on top (hand, tags/actions/resources/VP/
+            // effects popups, the milestones/projects/awards popup, the card view).
+            if (CloseActiveWindow())
+            {
+                return;
+            }
             if (_showScoreboard)
             {
                 _showScoreboard = false;
+                return;
+            }
+            if (_showPrepare)
+            {
+                _showPrepare = false;
                 return;
             }
             if (_showOverlay)
@@ -2653,9 +3731,58 @@ namespace TfmCardRefresh
             }
         }
 
+        // Close the top-most game window on Esc. Returns true if it closed one. Uses the
+        // proper close path per window so tray state stays correct, and bypasses the
+        // off-turn keep-open suppression (this is a deliberate close).
+        private bool CloseActiveWindow()
+        {
+            try
+            {
+                if (!Singleton<GameManager>.IsInstanced)
+                {
+                    return false;
+                }
+                EPage top = TopPage();
+                switch (top)
+                {
+                    case EPage.ViewPlayerCardsPage:
+                        ToggleHand();
+                        return true;
+                    case EPage.CardActionsPopup:
+                    case EPage.CardResourcesPopup:
+                    case EPage.CardVictoryPointsPopup:
+                    case EPage.CardEffectsPopup:
+                    case EPage.CardTagsPopup:
+                        TryTogglePopup(top);
+                        return true;
+                    case EPage.ActionPopup:
+                    {
+                        ActionPopup ap = UIManager.Instance.GetPage<ActionPopup>(EPage.ActionPopup);
+                        if (ap != null)
+                        {
+                            ap.OnCloseButtonClick();
+                        }
+                        return true;
+                    }
+                    case EPage.ExpandPlayerCardsPage:
+                    {
+                        UserClosingHand = true;
+                        UserClosingPanelFrames = 30;
+                        UIManager.Instance.Pop(EPage.ExpandPlayerCardsPage);
+                        UserClosingHand = false;
+                        return true;
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+            }
+            return false;
+        }
+
         // Press the first of the named popup button fields that is shown and
         // interactable. Shared by Space (Yes/Ok) and ESC (No/Close).
-        private static void PressFirstActivePopupButton(GenericPopup popup, params string[] fields)
+        private static bool PressFirstActivePopupButton(GenericPopup popup, params string[] fields)
         {
             foreach (string field in fields)
             {
@@ -2668,9 +3795,10 @@ namespace TfmCardRefresh
                 if (button != null && button.interactable)
                 {
                     button.onClick.Invoke();
-                    return;
+                    return true;
                 }
             }
+            return false;
         }
     }
 

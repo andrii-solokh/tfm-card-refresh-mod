@@ -98,9 +98,6 @@ scripts). Stock BepInEx auto-injects when you launch the game normally.
 To play the **stock** game, temporarily rename or remove `winhttp.dll` from the
 game folder (or delete `BepInEx\`).
 
-> Number badges use **Ctrl** on Windows (the same key as Cmd on macOS): e.g.
-> `Ctrl`+`1` to use the first numbered card. Everything else is identical.
-
 ### Confirm it loaded
 
 `BepInEx/LogOutput.log` in the game folder should end with:
@@ -122,45 +119,67 @@ Chainloader startup complete
 4. **Card view re-checks playability** on state change (no close/reopen).
 5. **Projects open on your turn**, and the hand reopens after you play a card.
 6. **Action availability shown off-turn** (unused actions active, used ones dim).
-7. **Full keyboard control** (see Hotkeys below): every panel and action on the
-   Cmd/Ctrl layer, Space to confirm, `Esc` to cancel (presses **No / Close** on a
-   confirm dialog).
-8. **Number/letter badges to click by keyboard** — hold Cmd/Ctrl and the on-screen
-   choices light up: cards in hand or a picker (`1`–`4`, `Q W E R`), standard
-   projects / milestones / awards rows, and the hand's sort tabs (`5`–`9`). Press
-   the badge to activate that item.
+7. **Full keyboard control** (see Hotkeys below): every panel and action on a plain
+   letter key (so `E`/`T` always open Effects/Tags, even mid-card-play). `Space`
+   confirms a dialog / card, `Z` skips / passes, `Esc` closes the active window.
+8. **Number/letter badges to play by keyboard** — hold the **highlight** key
+   (`Alt`/`Option` by default) and the on-screen choices light up: cards in hand or a
+   picker (`1`–`4`, `Q W E R`), standard projects / milestones / awards rows, the
+   corporation-selection cards, and the hand's sort tabs (`5`–`9`). Keep it held and
+   press the badge key to activate that item (`Space` confirms). Card-play sits on this
+   layer so the bare letters stay free for the panels.
 9. **Live scoreboard** (`Tab`) — a panel in the top-right showing every player's
    current victory points, broken down by source (Terraforming Rating, Awards,
    Milestones, Greenery, City, Card VP) with the total, sorted, your row marked.
    Computed exactly like the game's end screen but read-only: it reflects the
    standings *as if the game ended now* and never affects play.
+10. **Prepare queue** (`Q` — experimental) — line up your next turn during opponents'
+    turns; the mod plays it for you the moment your turn starts. While it isn't your
+    turn, hold `Alt` and press a badge to **queue** that card / card-action / standard
+    project / milestone / award instead of doing it (`G`/`F` queue greenery/temperature,
+    `Z` queues Pass). On your turn it plays them in order — cards auto-play with
+    auto-filled steel/titanium and auto-confirmed payment, atomic actions fire and
+    auto-confirm; anything needing a tile / target / choice hands off to you. Capped at
+    2 actions (a turn's worth) + Pass. `Q` shows the queue, `Backspace` undo, `Delete`
+    clear. On your own turn a badge plays normally (full resource control) unless you
+    hold the add-key (`Shift`).
+11. **Stay on your own board vs bots** — offline the game follows each bot's turn;
+    the mod snaps the view back to your board and keeps `P`/`A`/sell showing *your*
+    cards (`Features.StayFocusedOnMyBoard`).
 
 ## Hotkeys
 
-Almost everything lives on the **Cmd/Ctrl layer** now. The only bare keys are
-Space, Esc, the arrows, `Tab`, and `1`–`5`.
+Two layers, so nothing collides. **Bare keys** open panels and take board actions.
+**Hold `Alt`/`Option`** (the *highlight* key) to light up the on-screen badges, then
+press a badge to play that card/row. Card-play lives on the Alt layer on purpose, so
+a bare `E`/`R`/`T` always opens Effects/Resources/Tags — even while you're looking at
+your hand.
 
-> **macOS:** use **Ctrl** (not Cmd) for these combos. `Cmd+Q/W/H/M` etc. are
-> system shortcuts (quit / close / hide / minimise) and never reach the game. The
-> mod accepts Ctrl and Cmd equally, so Ctrl is the safe choice on a Mac.
+> **Why not Cmd/Ctrl:** on macOS `Cmd+Q/W/M/H` are system shortcuts (quit / close /
+> minimise / hide) that never reach the game. `Alt`/`Option` has no such trap (and
+> no `Ctrl+click`=right-click side effect). Rebind it with `Keys.Highlight`. Keys are
+> only read while the game has focus and no text field is active, so they never
+> interfere with chat.
+
+**Hold `Alt` / `Option`** (badges + letter-hints appear while held)
+
+| Key | Action |
+|-----|--------|
+| `Alt`+`1` `2` `3` `4` `Q` `W` `E` `R` | Play / use the 1st–8th on-screen card, action, or standard project / milestone / award (page for more) |
+| `Alt`+`5`–`9` | Select the hand's sort/filter tabs (Cost, Playability, Card Type, Tags, Chronological) |
 
 **Bare keys**
 
 | Key | Action |
 |-----|--------|
-| Space | Confirm the SELECT ONE / dialog Yes-OK / focused card, else pass / end turn |
-| Esc | Cancel: press No / Close on a confirm dialog, else hide the mod's panels |
+| Space | Confirm the SELECT ONE / dialog Yes-OK / focused card (does **not** pass) |
+| Esc | Close the active window (hand, a popup, the card view); on a dialog press No / Close; else hide the mod's panels |
+| Z | Skip / pass your turn (or queue Pass while preparing) |
 | ↑ ↓ ← → | Navigate a choice list; ← → also page cards |
 | Tab | Toggle the live scoreboard |
-| 1–5 | Focus a player's board (1 = you, then the others) |
-
-**Hold Cmd/Ctrl** (badges and letter-hints appear on screen while held):
-
-| Key | Action |
-|-----|--------|
-| `1` `2` `3` `4` `Q` `W` `E` `R` | Play / use the 1st–8th on-screen card, action, or standard project / milestone / award (page for more) |
-| `5`–`9` | Select the hand's sort/filter tabs (Cost, Playability, Card Type, Tags, Chronological) |
-| C | Projects (hand) |
+| Q | Toggle the Prepare-queue panel |
+| 1–5 | Focus a player's board (1 = you) |
+| P | Projects (hand) |
 | A | Actions |
 | R | Resources |
 | V | Victory points |
@@ -175,10 +194,9 @@ Space, Esc, the arrows, `Tab`, and `1`–`5`.
 | G | Convert plants → greenery |
 | F | Convert heat → temperature |
 
-The card keys map left-to-right to the cards in view: the number row for the
-first four, the `Q W E R` row for the next four (closer than reaching for `5`–`8`).
-Where a key names both a card slot and a panel (W/E/R), the card wins while cards
-are on screen; otherwise it opens the panel. Conversions only fire when you can
+The card keys map left-to-right to the cards in view: the number row for the first
+four, the `Q W E R` row for the next four (closer than reaching for `5`–`8`). Hold
+`Alt` and the badges show you which is which. Conversions only fire when you can
 actually convert (enough resources, your turn).
 
 ### Live scoreboard (`Tab`)
@@ -190,6 +208,27 @@ with `▸` and rows are sorted by total. Awards and milestone leads reflect curr
 standings (what you'd score *if the game ended now*), so they shift as the board
 changes. It only reads game state, computing the same numbers the game does, so it
 never affects play or unlocks achievements.
+
+### Prepare queue (`Q`) — experimental
+
+Line up your next turn while an opponent (or a bot) is playing, and the mod runs it
+for you the instant it becomes your turn.
+
+- **While it isn't your turn**, hold `Alt` and press an on-screen badge to **queue**
+  that item instead of doing it: a **card** from your hand, a **card action**, a
+  **standard project**, a **milestone**, an **award**. `G`/`F` queue greenery /
+  temperature; `Z` queues **Pass** (always fires last).
+- **On your turn** the queue plays in order. Cards auto-play (steel/titanium
+  pre-filled to cover the cost, and the *"play this card?"* confirm auto-pressed);
+  atomic actions fire and auto-confirm. Anything that still needs a **tile, target,
+  or choice** opens that step and **hands off to you**, then the queue resumes.
+- **Cap:** two actions (a turn's worth) plus Pass; adding a third bumps the last one.
+- `Q` shows/hides the queue, `Backspace` undoes the last add, `Delete` clears it.
+- On your **own** turn a badge plays normally, so you keep full control of resource
+  payments — hold the add-key (`Shift`) if you deliberately want to queue on your turn.
+
+It's read-through-the-real-UI automation of things you could click yourself; the
+server still validates every action, and an empty queue does nothing.
 
 ## Config (toggle features / rebind keys)
 
